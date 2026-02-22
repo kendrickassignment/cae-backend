@@ -1,5 +1,6 @@
 """
 Corporate Accountability Engine (CAE) — LLM Provider Abstraction
+Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Supports multiple FREE LLM providers:
   1. Google Gemini (Free tier — gemini-2.5-flash, 1M tokens)
@@ -123,7 +124,7 @@ class GeminiProvider(BaseLLMProvider):
             "generationConfig": {
                 "temperature": 0.1,  # Low temp for precise, factual analysis
                 "topP": 0.95,
-                "maxOutputTokens": 8192,
+                "maxOutputTokens": 65536,  # Large output for detailed 300-page analysis
                 "responseMimeType": "application/json"  # Force JSON output
             }
         }
