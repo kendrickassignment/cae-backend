@@ -1,6 +1,5 @@
 """
 Corporate Accountability Engine (CAE) — FastAPI Backend
-Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Main application file. Provides REST API endpoints for:
   - PDF upload and parsing
@@ -83,9 +82,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",       # Local dev
         "http://localhost:5173",       # Vite dev
-        "https://preview--cae-animals.lovable.app/",  # Lovable preview
-        "https://cae-animals.lovable.app",  # Lovable deployed
-        os.getenv("FRONTEND_URL", ""),      # Custom frontend URL (if set)
+        "https://*.lovable.app",       # Lovable preview
+        "https://*.lovableproject.com", # Lovable deployed
+        os.getenv("FRONTEND_URL", ""), # Custom frontend URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -174,7 +173,18 @@ async def run_analysis(
         reports_store[report_id]["status"] = "processing"
 
         # Step 2: Parse the PDF
-        parsed_doc = parse_pdf(file_path)
+        # Copy file to a temp path to avoid file handle conflicts
+        import shutil
+        temp_path = file_path + ".processing.pdf"
+        shutil.copy2(file_path, temp_path)
+        
+        try:
+            parsed_doc = parse_pdf(temp_path)
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
         reports_store[report_id]["page_count"] = parsed_doc.page_count
         reports_store[report_id]["status"] = "analyzing"
 
