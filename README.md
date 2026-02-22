@@ -164,7 +164,7 @@ cae-backend/
 
 ---
 
-## 🛡️ Built by AFFA / Sinergia Animal International
+## 🛡️ Built by Kendrick with ❤️
 
 This tool empowers advocacy campaigns with instant, citation-backed evidence to hold multinational corporations accountable for their cage-free egg commitments in Southeast Asia.
 
