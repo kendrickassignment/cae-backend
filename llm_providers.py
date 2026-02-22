@@ -1,14 +1,15 @@
 """
 Corporate Accountability Engine (CAE) — LLM Provider Abstraction
-Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Supports multiple FREE LLM providers:
-  1. Google Gemini (Free tier — 15 RPM, 1M tokens/min)
+  1. Google Gemini (Free tier — gemini-2.5-flash, 1M tokens)
   2. Groq (Free tier — Llama 3, 30 RPM)
   3. Mistral (Free tier — mistral-small)
   4. OpenAI (Paid — GPT-4o, if grant money comes through)
 
 All providers use the same interface so you can swap with a single env var.
+
+Updated: Feb 2026 — Gemini 2.5 Flash (gemini-2.0-flash is deprecated)
 """
 
 import os
@@ -40,15 +41,52 @@ class BaseLLMProvider(ABC):
 
 
 # ============================================================================
+# RETRY HELPER — handles 429 (rate limit) automatically
+# ============================================================================
+
+async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.0):
+    """
+    Retry an async function with exponential backoff.
+    Specifically handles 429 Too Many Requests from LLM providers.
+    
+    Args:
+        func: Async function to retry
+        max_retries: Maximum number of retries (default 3)
+        base_delay: Base delay in seconds between retries (default 15s for rate limits)
+    
+    Returns:
+        The result of the function call
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except httpx.HTTPStatusError as e:
+            last_exception = e
+            if e.response.status_code == 429 and attempt < max_retries:
+                # Rate limited — wait and retry
+                delay = base_delay * (2 ** attempt)  # 15s, 30s, 60s
+                print(f"  ⏳ Rate limited (429). Waiting {delay}s before retry {attempt + 1}/{max_retries}...")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            raise
+    
+    raise last_exception
+
+
+# ============================================================================
 # PROVIDER 1: GOOGLE GEMINI (FREE)
 # ============================================================================
 
 class GeminiProvider(BaseLLMProvider):
     """
     Google Gemini API — FREE TIER
-    - Model: gemini-2.0-flash (or gemini-1.5-flash)
+    - Model: gemini-2.5-flash (latest as of Feb 2026)
     - Free: 15 requests/min, 1 million tokens/min
-    - Context window: 1M tokens (can handle entire 200-page PDFs!)
+    - Context window: 1M tokens (can handle entire 300-page PDFs!)
     - Best free option for large documents.
 
     Get your free API key: https://aistudio.google.com/apikey
@@ -58,11 +96,11 @@ class GeminiProvider(BaseLLMProvider):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required. Get free at https://aistudio.google.com/apikey")
-        self.model = "gemini-2.0-flash"
+        self.model = "gemini-2.5-flash"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
-        """Send analysis request to Gemini API."""
+        """Send analysis request to Gemini API with automatic retry on rate limit."""
 
         # Convert OpenAI-style messages to Gemini format
         system_text = ""
@@ -92,10 +130,14 @@ class GeminiProvider(BaseLLMProvider):
 
         url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=180.0) as client:  # 3 min timeout for large docs
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
+
+        # Retry up to 3 times on 429 errors with 15s/30s/60s backoff
+        data = await retry_with_backoff(_make_request)
 
         # Extract response
         content = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -150,14 +192,17 @@ class GroqProvider(BaseLLMProvider):
             "Content-Type": "application/json"
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                response.raise_for_status()
+                return response.json()
+
+        data = await retry_with_backoff(_make_request)
 
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
@@ -211,14 +256,17 @@ class MistralProvider(BaseLLMProvider):
             "Content-Type": "application/json"
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                response.raise_for_status()
+                return response.json()
+
+        data = await retry_with_backoff(_make_request)
 
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
@@ -272,14 +320,17 @@ class OpenAIProvider(BaseLLMProvider):
             "Content-Type": "application/json"
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
+        async def _make_request():
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                response.raise_for_status()
+                return response.json()
+
+        data = await retry_with_backoff(_make_request)
 
         content = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
@@ -352,12 +403,12 @@ def get_provider(
 
 PROVIDER_GUIDE = """
 ╔══════════════════════════════════════════════════════════════╗
-║              CAE — LLM PROVIDER GUIDE (2025)                ║
+║              CAE — LLM PROVIDER GUIDE (2026)                ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  🥇 GEMINI (Recommended — FREE)                             ║
-║     Model: gemini-2.0-flash                                  ║
-║     Context: 1M tokens (handles full 200-page PDFs!)         ║
+║     Model: gemini-2.5-flash (latest)                         ║
+║     Context: 1M tokens (handles full 300-page PDFs!)         ║
 ║     Free: 15 req/min, 1M tokens/min                          ║
 ║     Best for: Large documents, single-pass analysis          ║
 ║     Key: https://aistudio.google.com/apikey                  ║
@@ -381,6 +432,9 @@ PROVIDER_GUIDE = """
 ║     Context: 128k tokens                                     ║
 ║     Cost: ~$0.15-$0.30 per 200-page report                  ║
 ║     Best for: Highest quality, if budget allows              ║
+║                                                              ║
+║  ⚡ ALL PROVIDERS: Auto-retry on 429 rate limits             ║
+║     Backoff: 15s → 30s → 60s (3 retries max)                ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
