@@ -1,0 +1,15 @@
+# Web framework
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+
+# PDF parsing (the forensic reader)
+PyMuPDF==1.25.*
+
+# HTTP client for LLM API calls
+httpx==0.28.*
+
+# Environment variables
+python-dotenv==1.1.*
+
+# File upload support
+python-multipart==0.0.*
