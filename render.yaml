@@ -1,0 +1,19 @@
+# Render.com deployment config (FREE tier)
+# Push to GitHub, connect to Render, and it deploys automatically.
+
+services:
+  - type: web
+    name: cae-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: FRONTEND_URL
+        sync: false  # Set to your Lovable app URL
+    healthCheckPath: /health
+    autoDeploy: true
