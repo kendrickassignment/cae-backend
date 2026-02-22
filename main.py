@@ -21,9 +21,9 @@ from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from pdf_parser import parse_pdf, chunk_document, ParsedDocument
@@ -77,14 +77,17 @@ app = FastAPI(
 )
 
 # CORS — allow Lovable frontend to connect
+# NOTE: FastAPI CORSMiddleware does NOT support wildcard subdomains like https://*.lovable.app
+# You must list each specific origin explicitly.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",       # Local dev
-        "http://localhost:5173",       # Vite dev
-        "https://*.lovable.app",       # Lovable preview
-        "https://*.lovableproject.com", # Lovable deployed
-        os.getenv("FRONTEND_URL", ""), # Custom frontend URL
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://id-preview--66fa6b17-db0f-4366-ba7e-e60ac0ceec2b.lovable.app",
+        "https://cae-animals.lovable.app",
+        "https://66fa6b17-db0f-4366-ba7e-e60ac0ceec2b.lovableproject.com",
+        os.getenv("FRONTEND_URL", ""),
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -173,18 +176,17 @@ async def run_analysis(
         reports_store[report_id]["status"] = "processing"
 
         # Step 2: Parse the PDF
-        # Copy file to a temp path to avoid file handle conflicts
-        import shutil
+        # Copy file to a temp path to avoid file handle conflicts on large docs
         temp_path = file_path + ".processing.pdf"
         shutil.copy2(file_path, temp_path)
-        
+
         try:
             parsed_doc = parse_pdf(temp_path)
         finally:
             # Clean up temp file
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-        
+
         reports_store[report_id]["page_count"] = parsed_doc.page_count
         reports_store[report_id]["status"] = "analyzing"
 
@@ -295,10 +297,10 @@ async def run_analysis(
 # API ENDPOINTS
 # ============================================================================
 
-@app.get("/")
-async def root():
-    """Health check and API info."""
-    return {
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root(request: Request):
+    """Health check and API info. Supports both GET and HEAD for Render health checks."""
+    body = {
         "name": "Corporate Accountability Engine (CAE)",
         "version": "1.0.0",
         "organization": "Sinergia Animal International / AFFA",
@@ -315,11 +317,21 @@ async def root():
         }
     }
 
+    if request.method == "HEAD":
+        return Response(status_code=200)
 
-@app.get("/health")
-async def health():
+    return body
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health(request: Request):
     """Simple health check for uptime monitoring."""
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    body = {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+    if request.method == "HEAD":
+        return Response(status_code=200)
+
+    return body
 
 
 # --- UPLOAD ---
