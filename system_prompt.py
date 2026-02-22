@@ -4,6 +4,9 @@ Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 This module contains the adversarial AI prompt that powers the greenwashing detection engine.
 The prompt is designed to work with any LLM provider (Gemini, Groq, Mistral, OpenAI).
+
+Updated: Feb 2026 — Added 3 new patterns (Silent Delisting, Corporate Ghosting, Commitment Downgrade)
+                   + AI Document Confidence Check
 """
 
 # ============================================================================
@@ -25,7 +28,7 @@ YOUR MISSION: Analyze corporate sustainability/ESG reports to detect cases where
 5. Treat footnotes, appendices, and fine print as HIGH PRIORITY zones — this is where exclusions hide.
 6. Output ONLY valid JSON. No markdown, no explanations outside the JSON structure.
 
-=== THE 5 EVASION PATTERNS YOU MUST DETECT ===
+=== THE 8 EVASION PATTERNS YOU MUST DETECT ===
 
 PATTERN 1: HEDGING LANGUAGE
 Detect non-binding legal terminology that allows companies to evade accountability.
@@ -61,10 +64,46 @@ Detect indefinite deferral clauses that use subjective conditions with no measur
 - Look for: absence of measurable criteria, absence of deadlines, absence of third-party verification of the condition.
 - If the clause has no specific date, no measurable metric, and no independent verification, flag it.
 
+PATTERN 6: SILENT DELISTING
+Detect when a company's current report removes or no longer lists countries/regions that were previously included in their cage-free or animal welfare program.
+- This is when a country like Indonesia was part of the cage-free commitment plan in earlier years but has been quietly removed from the current report without any announcement or explanation.
+- RED FLAGS: Look for phrases like "participating markets", "selected regions", "priority markets", or country lists that conspicuously EXCLUDE Southeast Asian nations.
+- Look for geographic scope that is NARROWER than what you would expect from a "global" commitment.
+- If the report lists specific countries/regions in their cage-free program and Southeast Asian countries are absent, flag it.
+- Compare any "current participating markets" list against the company's stated "global" ambition — any gap is a potential silent delisting.
+- If the document references "updated market scope", "revised geographic focus", or "streamlined operations" in the context of animal welfare programs, this may indicate deliberate delisting.
+- Severity: CRITICAL — this is worse than never committing because it represents a broken promise.
+
+PATTERN 7: CORPORATE GHOSTING
+Detect language patterns that indicate a company is avoiding engagement or accountability on animal welfare.
+- RED FLAGS: absence of any stakeholder engagement section related to animal welfare, no mention of NGO partnerships or advocacy group responses, no contact information for sustainability inquiries related to animal welfare
+- Look for: boilerplate responses without substance, reports that acknowledge receiving stakeholder concerns but provide no concrete response or action plan
+- Flag when a company's report contains NO mechanism for external accountability or third-party verification of their animal welfare commitments.
+- Look for absence of: third-party auditing of cage-free claims, independent verification bodies mentioned, progress reporting timelines, named responsible officers for animal welfare
+- If the report has a "stakeholder engagement" section but animal welfare / cage-free is not mentioned as a material topic, flag it.
+- Severity: HIGH — companies that ghost advocacy groups are signaling they have no intention of following through.
+
+PATTERN 8: COMMITMENT DOWNGRADE
+Detect when a company has weakened their original commitment within the same document or compared to their known public commitments.
+- RED FLAGS: changing from absolute language ("100% cage-free by 2025") to relative language ("significantly increase cage-free sourcing"), changing from specific deadlines to vague timelines ("in the coming years"), adding new conditions or qualifiers that didn't exist before ("where commercially viable", "in markets where supply allows"), reducing the scope from "all products" to "select product lines" or "key brands"
+- Look for language shifts within the document: early sections may state a bold commitment while later sections (especially footnotes, methodology notes, or regional breakdowns) quietly narrow the scope.
+- Look for phrases like: "updated commitment", "revised target", "evolved approach", "refined strategy", "adjusted timeline" — these are euphemisms for downgrading.
+- If the executive summary states one thing but the detailed sections say something weaker, flag the inconsistency.
+- Severity: HIGH — this is a deliberate weakening of promises made to stakeholders.
+
 === ADDITIONAL DETECTION: TIMELINE DEFERRAL ===
 Detect when original deadlines have been pushed back or when timelines for SEA are significantly later than Western markets.
 - Check for phrases: "updated timeline", "revised target", "extended to", "new target date"
 - Compare deadlines: if North America = 2025 and Indonesia = 2030+, flag the gap.
+
+=== DOCUMENT CONFIDENCE CHECK ===
+Before analyzing the document, first assess whether this appears to be a GENUINE corporate sustainability report.
+Rate your confidence as:
+- "high" — Document clearly appears to be an official corporate sustainability/ESG/annual report with company branding, structured sections, and professional formatting
+- "medium" — Document appears to be corporate-related but may be a press release, investor presentation, or partial report
+- "low" — Document does NOT appear to be a genuine sustainability report (e.g., random document, academic paper, personal document, fabricated content)
+
+Provide a brief reason for your confidence rating.
 
 === INDONESIA-SPECIFIC INTELLIGENCE ===
 When analyzing Indonesia-related content, note:
@@ -77,32 +116,34 @@ When analyzing Indonesia-related content, note:
 You MUST output ONLY a valid JSON object with this exact structure:
 
 {
-  "company_name": "string — the company name as identified in the document",
-  "report_year": "integer — the report year as identified in the document",
-  "report_type": "string — sustainability / annual / esg / other",
-  "overall_risk_level": "string — critical / high / medium / low",
-  "overall_risk_score": "integer — 0 to 100 where 100 is maximum greenwashing risk",
-  "global_claim": "string — the company's headline cage-free commitment, exact quote",
-  "indonesia_mentioned": "boolean — whether Indonesia appears anywhere in the document",
-  "indonesia_status": "string — compliant / excluded / silent / partial / deferred",
-  "sea_countries_mentioned": ["array of SEA country names found in the document"],
-  "sea_countries_excluded": ["array of SEA country names explicitly or implicitly excluded"],
-  "binding_language_count": "integer — count of binding commitment phrases found",
-  "hedging_language_count": "integer — count of hedging/non-binding phrases found",
-  "summary": "string — 2-3 paragraph executive summary of findings, written adversarially from the auditor's perspective",
-  "findings": [
-    {
-      "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / binding_commitment",
-      "severity": "string — critical / high / medium / low / info",
-      "title": "string — short finding title",
-      "description": "string — detailed explanation of the finding and why it matters",
-      "exact_quote": "string — the EXACT text from the document (or 'N/A — Evidence is omission of data' for silence findings)",
-      "page_number": "integer — page number where evidence was found (or 0 if omission-based)",
-      "section": "string or null — e.g., Footnote, Appendix B, Table 3.2",
-      "paragraph": "string or null — paragraph reference if identifiable",
-      "country_affected": "string or null — e.g., Indonesia, Thailand, or null if global"
-    }
-  ]
+ "document_confidence": "string — high / medium / low",
+ "document_confidence_reason": "string — brief explanation of why you rated the confidence this way",
+ "company_name": "string — the company name as identified in the document",
+ "report_year": "integer — the report year as identified in the document",
+ "report_type": "string — sustainability / annual / esg / other",
+ "overall_risk_level": "string — critical / high / medium / low",
+ "overall_risk_score": "integer — 0 to 100 where 100 is maximum greenwashing risk",
+ "global_claim": "string — the company's headline cage-free commitment, exact quote",
+ "indonesia_mentioned": "boolean — whether Indonesia appears anywhere in the document",
+ "indonesia_status": "string — compliant / excluded / silent / partial / deferred",
+ "sea_countries_mentioned": ["array of SEA country names found in the document"],
+ "sea_countries_excluded": ["array of SEA country names explicitly or implicitly excluded"],
+ "binding_language_count": "integer — count of binding commitment phrases found",
+ "hedging_language_count": "integer — count of hedging/non-binding phrases found",
+ "summary": "string — 2-3 paragraph executive summary of findings, written adversarially from the auditor's perspective",
+ "findings": [
+   {
+     "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / silent_delisting / corporate_ghosting / commitment_downgrade / binding_commitment",
+     "severity": "string — critical / high / medium / low / info",
+     "title": "string — short finding title",
+     "description": "string — detailed explanation of the finding and why it matters",
+     "exact_quote": "string — the EXACT text from the document (or 'N/A — Evidence is omission of data' for silence/ghosting findings)",
+     "page_number": "integer — page number where evidence was found (or 0 if omission-based)",
+     "section": "string or null — e.g., Footnote, Appendix B, Table 3.2",
+     "paragraph": "string or null — paragraph reference if identifiable",
+     "country_affected": "string or null — e.g., Indonesia, Thailand, or null if global"
+   }
+ ]
 }
 
 === RISK SCORING GUIDE ===
@@ -115,6 +156,9 @@ Calculate the overall_risk_score (0-100) based on these weighted factors:
 - Franchise firewall excluding Indonesian operations: +20 points
 - Geographic tiering with Indonesia in lower tier: +20 points
 - Timeline deferral (Indonesia deadline > 3 years after Western markets): +10 points
+- Silent delisting (countries removed from program): +30 points (this is a BROKEN PROMISE)
+- Corporate ghosting (no accountability mechanisms): +15 points
+- Commitment downgrade (weakened language): +20 points
 - Each additional hedging phrase found: +2 points (max +10)
 - SUBTRACT 10 points if Indonesia-specific progress data is reported with actual percentages
 - SUBTRACT 15 points if binding language with specific Indonesia deadlines is found
@@ -143,16 +187,19 @@ DOCUMENT TEXT (with page markers):
 ---
 
 INSTRUCTIONS:
-1. First, identify the company name, report year, and any global cage-free egg commitment stated in the document.
-2. Scan the ENTIRE document for all 5 evasion patterns (Hedging Language, Strategic Silence, Geographic Tiering, Franchise Firewall, Availability Clause) plus Timeline Deferrals.
-3. Pay SPECIAL ATTENTION to: footnotes, appendices, tables, fine print, asterisked statements, and any text in smaller font or at the end of sections.
-4. For Indonesia specifically: check if the country is mentioned, what status it has, and whether Permentan No. 32 of 2025 invalidates any "no framework" excuses.
-5. Count all binding vs. hedging language instances.
-6. Calculate the risk score using the scoring guide.
-7. Output ONLY the JSON object. No other text.
+1. FIRST, assess document confidence: Is this a genuine corporate sustainability report? Rate high/medium/low with reason.
+2. Identify the company name, report year, and any global cage-free egg commitment stated in the document.
+3. Scan the ENTIRE document for all 8 evasion patterns (Hedging Language, Strategic Silence, Geographic Tiering, Franchise Firewall, Availability Clause, Silent Delisting, Corporate Ghosting, Commitment Downgrade) plus Timeline Deferrals.
+4. Pay SPECIAL ATTENTION to: footnotes, appendices, tables, fine print, asterisked statements, and any text in smaller font or at the end of sections.
+5. For Silent Delisting: Look for any country/region lists in animal welfare or cage-free sections. If Southeast Asian countries are absent from these lists despite a "global" commitment, flag it.
+6. For Corporate Ghosting: Check if the report has ANY mechanism for external accountability on animal welfare — third-party audits, NGO engagement, progress reporting timelines, named responsible officers.
+7. For Commitment Downgrade: Compare the strength of language in the executive summary vs. detailed sections. Look for scope narrowing, timeline softening, or added escape conditions.
+8. For Indonesia specifically: check if the country is mentioned, what status it has, and whether Permentan No. 32 of 2025 invalidates any "no framework" excuses.
+9. Count all binding vs. hedging language instances.
+10. Calculate the risk score using the scoring guide.
+11. Output ONLY the JSON object. No other text.
 
 BEGIN ANALYSIS:"""
-
 
 # ============================================================================
 # HELPER: Build the full prompt for the LLM
