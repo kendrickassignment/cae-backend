@@ -3,10 +3,12 @@ Corporate Accountability Engine (CAE) — FastAPI Backend
 Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Main application file. Provides REST API endpoints for:
-  - PDF upload and parsing
-  - AI-powered greenwashing analysis
-  - Results retrieval
-  - Health checks and provider testing
+ - PDF upload and parsing
+ - AI-powered greenwashing analysis
+ - Results retrieval
+ - Health checks and provider testing
+
+Updated: Feb 2026 — Added document_confidence support, 9 evasion patterns
 
 Deploy FREE on: Render.com, Railway.app, or Fly.io
 
@@ -31,7 +33,6 @@ from pdf_parser import parse_pdf, chunk_document, ParsedDocument
 from system_prompt import build_analysis_prompt
 from llm_providers import get_provider, LLMResponse, PROVIDERS
 
-
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -46,7 +47,6 @@ RESULTS_DIR.mkdir(exist_ok=True)
 reports_store: dict = {}
 analysis_store: dict = {}
 
-
 # ============================================================================
 # APP SETUP
 # ============================================================================
@@ -55,31 +55,30 @@ analysis_store: dict = {}
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     print("\n" + "=" * 60)
-    print("  CORPORATE ACCOUNTABILITY ENGINE (CAE)")
-    print("  Built for Sinergia Animal International / AFFA")
+    print(" CORPORATE ACCOUNTABILITY ENGINE (CAE)")
+    print(" Built for Sinergia Animal International / AFFA")
+    print(" 9 Evasion Patterns + AI Confidence Check")
     print("=" * 60)
-    print(f"  LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
-    print(f"  Upload Dir:   {UPLOAD_DIR.absolute()}")
-    print(f"  Results Dir:  {RESULTS_DIR.absolute()}")
+    print(f" LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
+    print(f" Upload Dir: {UPLOAD_DIR.absolute()}")
+    print(f" Results Dir: {RESULTS_DIR.absolute()}")
     print("=" * 60 + "\n")
     yield
     print("\nCAE shutting down.")
-
 
 app = FastAPI(
     title="Corporate Accountability Engine (CAE)",
     description=(
         "Adversarial AI auditor for corporate sustainability reports. "
         "Detects greenwashing in cage-free egg commitments with focus on Southeast Asia. "
+        "9 evasion patterns + AI document confidence check. "
         "Built for Sinergia Animal International / AFFA."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
 # CORS — allow Lovable frontend to connect
-# NOTE: FastAPI CORSMiddleware does NOT support wildcard subdomains like https://*.lovable.app
-# You must list each specific origin explicitly.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -88,13 +87,14 @@ app.add_middleware(
         "https://id-preview--66fa6b17-db0f-4366-ba7e-e60ac0ceec2b.lovable.app",
         "https://cae-animals.lovable.app",
         "https://66fa6b17-db0f-4366-ba7e-e60ac0ceec2b.lovableproject.com",
+        "https://truthextracted.com",
+        "https://www.truthextracted.com",
         os.getenv("FRONTEND_URL", ""),
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -105,11 +105,10 @@ class ReportStatus(BaseModel):
     file_name: str
     company_name: str | None = None
     report_year: int | None = None
-    status: str  # uploading | uploaded | processing | analyzing | completed | failed
+    status: str # uploading | uploaded | processing | analyzing | completed | failed
     page_count: int | None = None
     created_at: str
     error: str | None = None
-
 
 class AnalysisResult(BaseModel):
     id: str
@@ -127,6 +126,8 @@ class AnalysisResult(BaseModel):
     hedging_language_count: int = 0
     summary: str | None = None
     findings: list[dict] = []
+    document_confidence: str | None = None
+    document_confidence_reason: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     input_tokens: int = 0
@@ -134,26 +135,22 @@ class AnalysisResult(BaseModel):
     cost_estimate_usd: float = 0.0
     analyzed_at: str | None = None
 
-
 class UploadResponse(BaseModel):
     report_id: str
     file_name: str
     status: str
     message: str
 
-
 class AnalyzeRequest(BaseModel):
     report_id: str
     company_name: str | None = None
     report_year: int | None = None
-    provider: str | None = None  # gemini, groq, mistral, openai
-    api_key: str | None = None   # Optional override
-
+    provider: str | None = None # gemini, groq, mistral, openai
+    api_key: str | None = None # Optional override
 
 class ProviderTestRequest(BaseModel):
     provider: str
     api_key: str | None = None
-
 
 # ============================================================================
 # ROBUST JSON PARSER — handles all LLM output quirks
@@ -209,7 +206,6 @@ def parse_llm_json(raw_content: str) -> dict:
             return json.loads(json_str)
         except json.JSONDecodeError:
             # Attempt 4: Fix trailing commas (common LLM mistake)
-            # Remove commas before closing braces/brackets
             fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
             try:
                 return json.loads(fixed)
@@ -217,7 +213,6 @@ def parse_llm_json(raw_content: str) -> dict:
                 pass
     
     # Attempt 5: If all else fails, log what we got and raise
-    # Save the raw response for debugging
     debug_path = RESULTS_DIR / f"debug_raw_response_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(debug_path, 'w') as f:
         f.write(f"RAW LLM RESPONSE ({len(content)} chars):\n")
@@ -230,7 +225,6 @@ def parse_llm_json(raw_content: str) -> dict:
         f"First 100 chars: {content[:100]}... "
         f"Debug saved to {debug_path}"
     )
-
 
 # ============================================================================
 # BACKGROUND ANALYSIS TASK
@@ -254,14 +248,12 @@ async def run_analysis(
         reports_store[report_id]["status"] = "processing"
 
         # Step 2: Parse the PDF
-        # Copy file to a temp path to avoid file handle conflicts on large docs
         temp_path = file_path + ".processing.pdf"
         shutil.copy2(file_path, temp_path)
 
         try:
             parsed_doc = parse_pdf(temp_path)
         finally:
-            # Clean up temp file
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
@@ -269,31 +261,22 @@ async def run_analysis(
         reports_store[report_id]["status"] = "analyzing"
 
         # Step 3: Prepare text for LLM
-        # Gemini has 1M context — can handle full docs.
-        # For smaller context models (Groq 131k, Mistral 32k), we may need to chunk.
         document_text = parsed_doc.full_text_with_markers
-
-        # Rough token estimate (1 token ~ 4 chars)
         estimated_tokens = len(document_text) // 4
-
         effective_provider = provider_name or os.getenv("LLM_PROVIDER", "gemini")
 
-        # Context window limits (conservative, accounting for system prompt + output)
         context_limits = {
-            "gemini": 900_000,    # 1M context, leave room
-            "groq": 120_000,      # 131k context
-            "mistral": 28_000,    # 32k context
-            "openai": 120_000,    # 128k context
+            "gemini": 900_000,
+            "groq": 120_000,
+            "mistral": 28_000,
+            "openai": 120_000,
         }
 
         max_tokens = context_limits.get(effective_provider, 120_000)
 
         if estimated_tokens > max_tokens:
-            # Truncate to fit (prioritize beginning + end where exclusions hide)
             char_limit = max_tokens * 4
             half = char_limit // 2
-
-            # Take first half (executive summary, main claims) + last half (appendices, footnotes)
             document_text = (
                 document_text[:half]
                 + "\n\n--- [DOCUMENT TRUNCATED FOR CONTEXT LIMIT — MIDDLE SECTIONS OMITTED] ---\n\n"
@@ -318,7 +301,7 @@ async def run_analysis(
         # Step 6: Parse LLM response
         result_data = parse_llm_json(llm_response.content)
 
-        # Step 7: Store the analysis result
+        # Step 7: Store the analysis result (now includes document_confidence)
         analysis_result = {
             "id": analysis_id,
             "report_id": report_id,
@@ -335,6 +318,8 @@ async def run_analysis(
             "hedging_language_count": result_data.get("hedging_language_count", 0),
             "summary": result_data.get("summary"),
             "findings": result_data.get("findings", []),
+            "document_confidence": result_data.get("document_confidence"),
+            "document_confidence_reason": result_data.get("document_confidence_reason"),
             "llm_provider": llm_response.provider,
             "llm_model": llm_response.model,
             "input_tokens": llm_response.input_tokens,
@@ -360,7 +345,6 @@ async def run_analysis(
         reports_store[report_id]["error"] = str(e)
         print(f"Analysis failed for report {report_id}: {e}")
 
-
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -370,9 +354,11 @@ async def root(request: Request):
     """Health check and API info. Supports both GET and HEAD for Render health checks."""
     body = {
         "name": "Corporate Accountability Engine (CAE)",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "organization": "Sinergia Animal International / AFFA",
         "status": "operational",
+        "evasion_patterns": 9,
+        "features": ["9 evasion patterns", "AI confidence check", "document verification"],
         "docs": "/docs",
         "endpoints": {
             "upload": "POST /upload",
@@ -390,17 +376,15 @@ async def root(request: Request):
 
     return body
 
-
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health(request: Request):
     """Simple health check for uptime monitoring."""
-    body = {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    body = {"status": "ok", "version": "2.0.0", "timestamp": datetime.utcnow().isoformat()}
 
     if request.method == "HEAD":
         return Response(status_code=200)
 
     return body
-
 
 # --- UPLOAD ---
 
@@ -449,7 +433,6 @@ async def upload_report(file: UploadFile = File(...)):
         status="uploaded",
         message="PDF uploaded successfully. Send POST /analyze to start analysis."
     )
-
 
 # --- ANALYZE ---
 
@@ -502,7 +485,6 @@ async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTa
         "provider": request.provider or os.getenv("LLM_PROVIDER", "gemini")
     }
 
-
 # --- REPORT STATUS ---
 
 @app.get("/reports/{report_id}")
@@ -531,14 +513,12 @@ async def get_report_status(report_id: str):
 
     return response
 
-
 # --- ALL REPORTS ---
 
 @app.get("/reports")
 async def list_reports():
     """List all uploaded reports and their statuses."""
     reports = list(reports_store.values())
-    # Remove file_path from response (internal only)
     safe_reports = []
     for r in reports:
         safe = {k: v for k, v in r.items() if k != "file_path"}
@@ -548,7 +528,6 @@ async def list_reports():
         "total": len(safe_reports),
         "reports": sorted(safe_reports, key=lambda x: x["created_at"], reverse=True)
     }
-
 
 # --- ANALYSIS RESULTS ---
 
@@ -566,7 +545,6 @@ async def get_analysis(analysis_id: str):
 
     return analysis_store[analysis_id]
 
-
 # --- EXPORT ---
 
 @app.get("/analysis/{analysis_id}/export")
@@ -583,7 +561,6 @@ async def export_analysis_csv(analysis_id: str):
     analysis = analysis_store[analysis_id]
     findings = analysis.get("findings", [])
 
-    # Build CSV lines
     headers = [
         "finding_type", "severity", "title", "description",
         "exact_quote", "page_number", "section", "country_affected"
@@ -604,10 +581,10 @@ async def export_analysis_csv(analysis_id: str):
             "csv": csv_content,
             "company": analysis.get("company_name"),
             "findings_count": len(findings),
-            "risk_level": analysis.get("overall_risk_level")
+            "risk_level": analysis.get("overall_risk_level"),
+            "document_confidence": analysis.get("document_confidence")
         }
     )
-
 
 # --- PROVIDERS ---
 
@@ -619,7 +596,7 @@ async def list_providers():
         "available": {
             "gemini": {
                 "name": "Google Gemini",
-                "model": "gemini-2.0-flash",
+                "model": "gemini-2.5-flash",
                 "free": True,
                 "context_window": "1M tokens",
                 "best_for": "Large documents (200+ pages), single-pass analysis",
@@ -653,7 +630,6 @@ async def list_providers():
         }
     }
 
-
 @app.post("/providers/test")
 async def test_provider(request: ProviderTestRequest):
     """Test if a provider API key is valid and working."""
@@ -663,7 +639,6 @@ async def test_provider(request: ProviderTestRequest):
             api_key=request.api_key
         )
 
-        # Send a minimal test request
         test_messages = [
             {"role": "system", "content": "You are a test bot. Respond with exactly: {\"status\": \"ok\"}"},
             {"role": "user", "content": "Test connection."}
@@ -688,7 +663,6 @@ async def test_provider(request: ProviderTestRequest):
                 "message": "Connection failed. Check your API key."
             }
         )
-
 
 # ============================================================================
 # RUN
