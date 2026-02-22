@@ -1,6 +1,5 @@
 """
 Corporate Accountability Engine (CAE) — Forensic PDF Parser
-Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Extracts text from PDF files with page number preservation,
 special handling for footnotes, tables, and appendices.
@@ -244,13 +243,19 @@ def parse_pdf(file_path: str) -> ParsedDocument:
             for i, table in enumerate(tables):
                 full_text_parts.append(f"  TABLE {i+1}:\n{table}\n")
 
+    # Save page count BEFORE closing the document
+    total_pages = len(doc)
+    
+    # Build the full text string BEFORE closing
+    full_text = "".join(full_text_parts)
+    
     doc.close()
 
     return ParsedDocument(
         file_name=file_path.split("/")[-1],
-        page_count=len(doc) if hasattr(doc, '__len__') else metadata["total_pages"],
+        page_count=total_pages,
         pages=pages,
-        full_text_with_markers="".join(full_text_parts),
+        full_text_with_markers=full_text,
         metadata=metadata
     )
 
