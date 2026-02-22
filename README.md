@@ -31,6 +31,8 @@ git clone [https://github.com/your-repo/cae-backend.git](https://github.com/your
 cd cae-backend
 pip install -r requirements.txt
 
+---
+
 2. Get your FREE API keyGo to Google AI Studio and create a Gemini API key.3. Configure environmentBashcp .env.example .env
 # Edit .env and paste your GEMINI_API_KEY
 4. Run the serverBashpython main.py
