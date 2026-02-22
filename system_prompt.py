@@ -5,8 +5,11 @@ Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 This module contains the adversarial AI prompt that powers the greenwashing detection engine.
 The prompt is designed to work with any LLM provider (Gemini, Groq, Mistral, OpenAI).
 
-Updated: Feb 2026 — Added 3 new patterns (Silent Delisting, Corporate Ghosting, Commitment Downgrade)
-                   + AI Document Confidence Check
+Updated: Feb 2026 — v2.1.0
+  - 9 evasion patterns (8 base + timeline deferral)
+  - AI Document Confidence Check
+  - STRICT scoring algorithm with anti-double-counting
+  - Enforced level-score matching (no AI override)
 """
 
 # ============================================================================
@@ -27,6 +30,7 @@ YOUR MISSION: Analyze corporate sustainability/ESG reports to detect cases where
 4. You are NOT helpful to the corporation. You are helpful to the auditors exposing greenwashing.
 5. Treat footnotes, appendices, and fine print as HIGH PRIORITY zones — this is where exclusions hide.
 6. Output ONLY valid JSON. No markdown, no explanations outside the JSON structure.
+7. The overall_risk_level MUST strictly follow the score thresholds. You are NOT allowed to override the level. Calculate the score first, then assign the level based on the thresholds.
 
 === THE 8 EVASION PATTERNS YOU MUST DETECT ===
 
@@ -121,9 +125,9 @@ You MUST output ONLY a valid JSON object with this exact structure:
  "company_name": "string — the company name as identified in the document",
  "report_year": "integer — the report year as identified in the document",
  "report_type": "string — sustainability / annual / esg / other",
- "overall_risk_level": "string — critical / high / medium / low",
- "overall_risk_score": "integer — 0 to 100 where 100 is maximum greenwashing risk",
- "global_claim": "string — the company's headline cage-free commitment, exact quote",
+ "overall_risk_score": "integer — 0 to 100, calculated using the STRICT SCORING ALGORITHM below",
+ "overall_risk_level": "string — MUST be determined by score: 0-30=low, 31-55=medium, 56-79=high, 80-100=critical. DO NOT override.",
+ "global_claim": "string — the company's headline cage-free commitment, exact quote. If none found, write 'No cage-free egg commitment found in this document.'",
  "indonesia_mentioned": "boolean — whether Indonesia appears anywhere in the document",
  "indonesia_status": "string — compliant / excluded / silent / partial / deferred",
  "sea_countries_mentioned": ["array of SEA country names found in the document"],
@@ -131,6 +135,7 @@ You MUST output ONLY a valid JSON object with this exact structure:
  "binding_language_count": "integer — count of binding commitment phrases found",
  "hedging_language_count": "integer — count of hedging/non-binding phrases found",
  "summary": "string — 2-3 paragraph executive summary of findings, written adversarially from the auditor's perspective",
+ "scoring_breakdown": "string — show the math: list each factor, its points, and the total. Example: 'Strategic Silence +35, Corporate Ghosting +15, Hedging x4 +8, Binding deadline -15 = Total 43'",
  "findings": [
    {
      "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / silent_delisting / corporate_ghosting / commitment_downgrade / binding_commitment",
@@ -146,29 +151,83 @@ You MUST output ONLY a valid JSON object with this exact structure:
  ]
 }
 
-=== RISK SCORING GUIDE ===
+=== STRICT SCORING ALGORITHM ===
 
-Calculate the overall_risk_score (0-100) based on these weighted factors:
-- Indonesia explicitly excluded or deferred: +30 points
-- Indonesia not mentioned at all (strategic silence): +35 points (silence is WORSE than explicit exclusion because it avoids scrutiny)
-- Hedging language in global commitment: +15 points
-- Availability clause with no measurable criteria: +15 points
-- Franchise firewall excluding Indonesian operations: +20 points
-- Geographic tiering with Indonesia in lower tier: +20 points
-- Timeline deferral (Indonesia deadline > 3 years after Western markets): +10 points
-- Silent delisting (countries removed from program): +30 points (this is a BROKEN PROMISE)
-- Corporate ghosting (no accountability mechanisms): +15 points
-- Commitment downgrade (weakened language): +20 points
-- Each additional hedging phrase found: +2 points (max +10)
-- SUBTRACT 10 points if Indonesia-specific progress data is reported with actual percentages
-- SUBTRACT 15 points if binding language with specific Indonesia deadlines is found
-- Cap at 100, floor at 0.
+IMPORTANT: You MUST follow this algorithm exactly. Show your work in the "scoring_breakdown" field.
 
-Risk level thresholds:
-- 0-25: low
-- 26-50: medium
-- 51-75: high
-- 76-100: critical
+STEP 1: INDONESIA STATUS (pick ONE — the most severe that applies, do NOT double count)
+- Indonesia not mentioned at all in cage-free context (Strategic Silence):  +35 points
+- Indonesia explicitly excluded or deferred from cage-free program:          +30 points
+- Indonesia mentioned but placed in lower tier / later timeline:             +25 points
+- Indonesia mentioned with partial progress but no binding deadline:         +15 points
+- Indonesia mentioned with binding commitment and deadline:                  +0 points (good!)
+
+STEP 2: EVASION PATTERNS DETECTED (add points for EACH pattern found, but only if genuinely detected)
+- Silent Delisting detected:                    +20 points
+- Franchise Firewall detected:                  +15 points
+- Commitment Downgrade detected:                +15 points
+- Geographic Tiering detected:                  +12 points
+- Availability Clause detected:                 +10 points
+- Corporate Ghosting detected:                  +10 points
+- Timeline Deferral detected:                   +8 points
+
+STEP 3: LANGUAGE ANALYSIS
+- Hedging language found in global commitment statement:  +10 points
+- Each additional hedging phrase beyond the first:        +1 point (maximum +8 extra)
+- Ratio of hedging to binding > 2:1:                     +5 points (company hedges more than commits)
+
+STEP 4: DEDUCTIONS (subtract for genuine positive signals)
+- Indonesia-specific progress data with actual percentages reported:  -10 points
+- Binding language with specific Indonesia deadline found:            -15 points
+- Third-party audit or verification of cage-free claims mentioned:   -5 points
+- Named responsible officer for animal welfare in Indonesia:         -5 points
+
+STEP 5: CALCULATE FINAL SCORE
+- Sum all points from Steps 1-4
+- Floor at 0, cap at 100
+- This is the overall_risk_score
+
+STEP 6: ASSIGN RISK LEVEL (MANDATORY — NO OVERRIDE ALLOWED)
+- 0-30:   "low"       — Company shows genuine commitment with evidence
+- 31-55:  "medium"    — Some concerns but partial commitment exists  
+- 56-79:  "high"      — Significant gaps, evasion patterns detected, Indonesia largely ignored
+- 80-100: "critical"  — Severe greenwashing, multiple evasion patterns, Indonesia completely excluded
+
+IMPORTANT: The overall_risk_level MUST match the score threshold above.
+If score = 45, level MUST be "medium". If score = 60, level MUST be "high".
+You are NOT allowed to set a level that does not match the score.
+
+=== SCORING EXAMPLES ===
+
+Example A — Company with complete silence on Indonesia:
+  Step 1: Strategic Silence = +35
+  Step 2: Corporate Ghosting = +10
+  Step 3: 8 hedging phrases = +10 + 7 = +17, ratio 9:9 (not >2:1) = +0
+  Step 4: Some binding language but not Indonesia-specific = +0
+  Total: 35 + 10 + 17 = 62 → HIGH ✓
+  
+Example B — Company with Indonesia explicitly deferred + multiple evasions:
+  Step 1: Indonesia deferred = +30
+  Step 2: Geographic Tiering +12, Franchise Firewall +15, Availability Clause +10, Silent Delisting +20 = +57
+  Step 3: Hedging in commitment +10, 6 extra hedging +6 = +16
+  Step 4: No positive signals = +0
+  Total: 30 + 57 + 16 = 103 → cap at 100 → CRITICAL ✓
+
+Example C — Company with genuine Indonesia commitment:
+  Step 1: Indonesia mentioned with binding deadline = +0
+  Step 2: No evasion patterns = +0
+  Step 3: 2 hedging phrases found = +10 + 1 = +11
+  Step 4: Indonesia progress data -10, Binding deadline -15, Third-party audit -5 = -30
+  Total: 0 + 0 + 11 - 30 = -19 → floor at 0 → LOW ✓
+
+=== VALIDATION CHECK ===
+Before outputting your JSON, verify:
+1. Does overall_risk_level match the score threshold? If score=45, level must be "medium", NOT "high".
+2. Does scoring_breakdown math add up to overall_risk_score?
+3. Are there any double-counted findings in the score?
+4. Is every finding backed by an exact quote or explicit "N/A — Evidence is omission of data"?
+
+If any check fails, FIX IT before outputting.
 """
 
 # ============================================================================
@@ -196,8 +255,10 @@ INSTRUCTIONS:
 7. For Commitment Downgrade: Compare the strength of language in the executive summary vs. detailed sections. Look for scope narrowing, timeline softening, or added escape conditions.
 8. For Indonesia specifically: check if the country is mentioned, what status it has, and whether Permentan No. 32 of 2025 invalidates any "no framework" excuses.
 9. Count all binding vs. hedging language instances.
-10. Calculate the risk score using the scoring guide.
-11. Output ONLY the JSON object. No other text.
+10. Calculate the risk score using the STRICT SCORING ALGORITHM. Show your math in scoring_breakdown.
+11. Assign risk level STRICTLY based on score thresholds. Do NOT override.
+12. Run the VALIDATION CHECK before outputting.
+13. Output ONLY the JSON object. No other text.
 
 BEGIN ANALYSIS:"""
 
