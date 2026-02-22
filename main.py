@@ -83,9 +83,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",       # Local dev
         "http://localhost:5173",       # Vite dev
-        "https://*.lovable.app",       # Lovable preview
-        "https://*.lovableproject.com", # Lovable deployed
-        os.getenv("FRONTEND_URL", ""), # Custom frontend URL
+        "https://preview--cae-animals.lovable.app/",  # Lovable preview
+        "https://cae-animals.lovable.app",  # Lovable deployed
+        os.getenv("FRONTEND_URL", ""),      # Custom frontend URL (if set)
     ],
     allow_credentials=True,
     allow_methods=["*"],
