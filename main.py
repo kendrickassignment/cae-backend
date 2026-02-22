@@ -1,5 +1,6 @@
 """
 Corporate Accountability Engine (CAE) — FastAPI Backend
+Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Main application file. Provides REST API endpoints for:
   - PDF upload and parsing
@@ -155,6 +156,83 @@ class ProviderTestRequest(BaseModel):
 
 
 # ============================================================================
+# ROBUST JSON PARSER — handles all LLM output quirks
+# ============================================================================
+
+import re
+
+def parse_llm_json(raw_content: str) -> dict:
+    """
+    Parse JSON from LLM output, handling common issues:
+    1. Clean JSON (best case)
+    2. JSON wrapped in markdown code blocks (```json ... ```)
+    3. JSON with leading/trailing text
+    4. JSON with trailing commas
+    5. JSON with comments
+    """
+    content = raw_content.strip()
+    
+    # Attempt 1: Direct parse (best case — Gemini responseMimeType: json)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    
+    # Attempt 2: Strip markdown code blocks (```json ... ``` or ``` ... ```)
+    code_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?\s*```'
+    code_match = re.search(code_block_pattern, content, re.DOTALL)
+    if code_match:
+        try:
+            return json.loads(code_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    
+    # Attempt 3: Find the outermost { ... } JSON object
+    brace_depth = 0
+    json_start = -1
+    json_end = -1
+    
+    for i, char in enumerate(content):
+        if char == '{':
+            if brace_depth == 0:
+                json_start = i
+            brace_depth += 1
+        elif char == '}':
+            brace_depth -= 1
+            if brace_depth == 0 and json_start >= 0:
+                json_end = i + 1
+                break
+    
+    if json_start >= 0 and json_end > json_start:
+        json_str = content[json_start:json_end]
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # Attempt 4: Fix trailing commas (common LLM mistake)
+            # Remove commas before closing braces/brackets
+            fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError:
+                pass
+    
+    # Attempt 5: If all else fails, log what we got and raise
+    # Save the raw response for debugging
+    debug_path = RESULTS_DIR / f"debug_raw_response_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
+    with open(debug_path, 'w') as f:
+        f.write(f"RAW LLM RESPONSE ({len(content)} chars):\n")
+        f.write(f"First 500 chars: {content[:500]}\n")
+        f.write(f"Last 500 chars: {content[-500:]}\n")
+        f.write(f"\nFULL CONTENT:\n{content}")
+    
+    raise ValueError(
+        f"LLM did not return valid JSON. Response length: {len(content)} chars. "
+        f"First 100 chars: {content[:100]}... "
+        f"Debug saved to {debug_path}"
+    )
+
+
+# ============================================================================
 # BACKGROUND ANALYSIS TASK
 # ============================================================================
 
@@ -238,17 +316,7 @@ async def run_analysis(
         llm_response: LLMResponse = await provider.analyze(messages)
 
         # Step 6: Parse LLM response
-        try:
-            result_data = json.loads(llm_response.content)
-        except json.JSONDecodeError:
-            # Try to extract JSON from the response
-            content = llm_response.content
-            json_start = content.find('{')
-            json_end = content.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                result_data = json.loads(content[json_start:json_end])
-            else:
-                raise ValueError("LLM did not return valid JSON")
+        result_data = parse_llm_json(llm_response.content)
 
         # Step 7: Store the analysis result
         analysis_result = {
