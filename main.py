@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     print(" CORPORATE ACCOUNTABILITY ENGINE (CAE)")
     print(" Built for Sinergia Animal International / AFFA")
     print(" 9 Evasion Patterns + AI Confidence Check")
+    print(" Strict Scoring Algorithm v2.1")
     print("=" * 60)
     print(f" LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
     print(f" Upload Dir: {UPLOAD_DIR.absolute()}")
@@ -74,7 +75,7 @@ app = FastAPI(
         "9 evasion patterns + AI document confidence check. "
         "Built for Sinergia Animal International / AFFA."
     ),
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -128,6 +129,7 @@ class AnalysisResult(BaseModel):
     findings: list[dict] = []
     document_confidence: str | None = None
     document_confidence_reason: str | None = None
+    scoring_breakdown: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     input_tokens: int = 0
@@ -320,6 +322,7 @@ async def run_analysis(
             "findings": result_data.get("findings", []),
             "document_confidence": result_data.get("document_confidence"),
             "document_confidence_reason": result_data.get("document_confidence_reason"),
+            "scoring_breakdown": result_data.get("scoring_breakdown"),
             "llm_provider": llm_response.provider,
             "llm_model": llm_response.model,
             "input_tokens": llm_response.input_tokens,
@@ -379,7 +382,7 @@ async def root(request: Request):
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health(request: Request):
     """Simple health check for uptime monitoring."""
-    body = {"status": "ok", "version": "2.0.0", "timestamp": datetime.utcnow().isoformat()}
+    body = {"status": "ok", "version": "2.1.0", "timestamp": datetime.utcnow().isoformat()}
 
     if request.method == "HEAD":
         return Response(status_code=200)
