@@ -229,6 +229,158 @@ def parse_llm_json(raw_content: str) -> dict:
     )
 
 # ============================================================================
+# HARD VALIDATION — Python code that AI CANNOT override
+# ============================================================================
+
+VALID_FINDING_TYPES = {
+    "hedging_language", "geographic_exclusion", "strategic_silence",
+    "franchise_firewall", "availability_clause", "timeline_deferral",
+    "silent_delisting", "corporate_ghosting", "commitment_downgrade",
+    "binding_commitment"
+}
+VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+VALID_CONFIDENCE = {"high", "medium", "low"}
+VALID_INDO_STATUS = {"compliant", "excluded", "silent", "partial", "deferred"}
+
+
+def score_to_level(score: int) -> str:
+    """Convert risk score to risk level. This is LAW — no exceptions."""
+    if score <= 30:
+        return "low"
+    elif score <= 55:
+        return "medium"
+    elif score <= 79:
+        return "high"
+    else:
+        return "critical"
+
+
+def validate_analysis_result(result_data: dict, fallback_company: str | None = None) -> dict:
+    """
+    Validate and sanitize all AI output. This function enforces:
+    1. Score is integer 0-100
+    2. Level STRICTLY matches score thresholds (AI cannot override)
+    3. All enums are valid values
+    4. All findings have required fields and valid types
+    5. Counts are non-negative integers
+    
+    This is Python code, not an AI instruction. It is DETERMINISTIC.
+    """
+    # --- Score validation ---
+    raw_score = result_data.get("overall_risk_score", 0)
+    try:
+        score = int(raw_score)
+    except (TypeError, ValueError):
+        score = 50
+    score = max(0, min(100, score))  # Clamp 0-100
+
+    # --- Level enforcement (THE LAW) ---
+    enforced_level = score_to_level(score)
+    ai_level = str(result_data.get("overall_risk_level", "")).lower()
+    if ai_level != enforced_level:
+        print(
+            f"\u26a0\ufe0f  SCORE-LEVEL OVERRIDE: AI said score={score} level='{ai_level}' "
+            f"\u2192 FORCED to '{enforced_level}' "
+            f"(company: {result_data.get('company_name', 'unknown')})"
+        )
+
+    # --- Document confidence ---
+    raw_conf = str(result_data.get("document_confidence", "medium")).lower()
+    confidence = raw_conf if raw_conf in VALID_CONFIDENCE else "medium"
+
+    # --- Indonesia status ---
+    raw_indo = str(result_data.get("indonesia_status", "silent")).lower()
+    indo_status = raw_indo if raw_indo in VALID_INDO_STATUS else "silent"
+
+    # --- Integer counts ---
+    def safe_int(val, default=0):
+        try:
+            return max(0, int(val))
+        except (TypeError, ValueError):
+            return default
+
+    binding_count = safe_int(result_data.get("binding_language_count"))
+    hedging_count = safe_int(result_data.get("hedging_language_count"))
+
+    # --- Findings validation ---
+    raw_findings = result_data.get("findings", [])
+    if not isinstance(raw_findings, list):
+        raw_findings = []
+
+    validated_findings = []
+    for i, f in enumerate(raw_findings):
+        if not isinstance(f, dict):
+            continue
+
+        ftype = str(f.get("finding_type", "hedging_language")).lower()
+        if ftype not in VALID_FINDING_TYPES:
+            ftype = "hedging_language"
+
+        sev = str(f.get("severity", "medium")).lower()
+        if sev not in VALID_SEVERITIES:
+            sev = "medium"
+
+        page = 0
+        raw_page = f.get("page_number", 0)
+        try:
+            page = max(0, int(raw_page))
+        except (TypeError, ValueError):
+            page = 0
+
+        validated_findings.append({
+            "id": f"f-{i + 1}",
+            "finding_type": ftype,
+            "severity": sev,
+            "title": str(f.get("title", "Untitled Finding")),
+            "description": str(f.get("description", "")),
+            "exact_quote": str(f.get("exact_quote", "N/A")),
+            "page_number": page,
+            "section": f.get("section"),
+            "paragraph": f.get("paragraph"),
+            "country_affected": f.get("country_affected")
+        })
+
+    # --- Boolean validation ---
+    indo_mentioned = result_data.get("indonesia_mentioned")
+    if not isinstance(indo_mentioned, bool):
+        indo_mentioned = False
+
+    # --- SEA countries validation ---
+    sea_mentioned = result_data.get("sea_countries_mentioned", [])
+    if not isinstance(sea_mentioned, list):
+        sea_mentioned = []
+    sea_excluded = result_data.get("sea_countries_excluded", [])
+    if not isinstance(sea_excluded, list):
+        sea_excluded = []
+
+    print(
+        f"\u2705 VALIDATED: {result_data.get('company_name', 'unknown')} "
+        f"\u2014 score={score} level={enforced_level} "
+        f"confidence={confidence} indo={indo_status} "
+        f"findings={len(validated_findings)}"
+    )
+
+    return {
+        "company_name": result_data.get("company_name") or fallback_company or "Unknown Company",
+        "report_year": result_data.get("report_year"),
+        "overall_risk_score": score,
+        "overall_risk_level": enforced_level,
+        "global_claim": result_data.get("global_claim", "No cage-free commitment found."),
+        "indonesia_mentioned": indo_mentioned,
+        "indonesia_status": indo_status,
+        "sea_countries_mentioned": sea_mentioned,
+        "sea_countries_excluded": sea_excluded,
+        "binding_language_count": binding_count,
+        "hedging_language_count": hedging_count,
+        "summary": result_data.get("summary", "Analysis completed but no summary generated."),
+        "findings": validated_findings,
+        "document_confidence": confidence,
+        "document_confidence_reason": result_data.get("document_confidence_reason", ""),
+        "scoring_breakdown": result_data.get("scoring_breakdown", "No breakdown provided by AI."),
+    }
+
+
+# ============================================================================
 # BACKGROUND ANALYSIS TASK
 # ============================================================================
 
@@ -303,26 +455,29 @@ async def run_analysis(
         # Step 6: Parse LLM response
         result_data = parse_llm_json(llm_response.content)
 
-        # Step 7: Store the analysis result (now includes document_confidence)
+        # Step 6.5: HARD VALIDATION — Python code enforces rules AI cannot override
+        validated = validate_analysis_result(result_data, company_name)
+
+        # Step 7: Store the VALIDATED analysis result
         analysis_result = {
             "id": analysis_id,
             "report_id": report_id,
-            "company_name": result_data.get("company_name", company_name),
-            "report_year": result_data.get("report_year", report_year),
-            "overall_risk_level": result_data.get("overall_risk_level"),
-            "overall_risk_score": result_data.get("overall_risk_score"),
-            "global_claim": result_data.get("global_claim"),
-            "indonesia_mentioned": result_data.get("indonesia_mentioned"),
-            "indonesia_status": result_data.get("indonesia_status"),
-            "sea_countries_mentioned": result_data.get("sea_countries_mentioned", []),
-            "sea_countries_excluded": result_data.get("sea_countries_excluded", []),
-            "binding_language_count": result_data.get("binding_language_count", 0),
-            "hedging_language_count": result_data.get("hedging_language_count", 0),
-            "summary": result_data.get("summary"),
-            "findings": result_data.get("findings", []),
-            "document_confidence": result_data.get("document_confidence"),
-            "document_confidence_reason": result_data.get("document_confidence_reason"),
-            "scoring_breakdown": result_data.get("scoring_breakdown"),
+            "company_name": validated["company_name"],
+            "report_year": validated["report_year"] or report_year,
+            "overall_risk_level": validated["overall_risk_level"],
+            "overall_risk_score": validated["overall_risk_score"],
+            "global_claim": validated["global_claim"],
+            "indonesia_mentioned": validated["indonesia_mentioned"],
+            "indonesia_status": validated["indonesia_status"],
+            "sea_countries_mentioned": validated["sea_countries_mentioned"],
+            "sea_countries_excluded": validated["sea_countries_excluded"],
+            "binding_language_count": validated["binding_language_count"],
+            "hedging_language_count": validated["hedging_language_count"],
+            "summary": validated["summary"],
+            "findings": validated["findings"],
+            "document_confidence": validated["document_confidence"],
+            "document_confidence_reason": validated["document_confidence_reason"],
+            "scoring_breakdown": validated["scoring_breakdown"],
             "llm_provider": llm_response.provider,
             "llm_model": llm_response.model,
             "input_tokens": llm_response.input_tokens,
