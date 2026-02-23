@@ -90,6 +90,7 @@ app.add_middleware(
         "https://66fa6b17-db0f-4366-ba7e-e60ac0ceec2b.lovableproject.com",
         "https://truthextracted.com",
         "https://www.truthextracted.com",
+        "https://preview--cae-animals.lovable.app",
         os.getenv("FRONTEND_URL", ""),
     ],
     allow_credentials=True,
