@@ -115,6 +115,44 @@ When analyzing Indonesia-related content, note:
 - If a company cites "lack of local regulation" or "no local framework" as a reason for deferral in Indonesia, flag this as OUTDATED — the regulation now exists.
 - Major Indonesian operations to look for: PT Sari Coffee Indonesia (Starbucks licensee), PT Fast Food Indonesia (KFC), PT Rekso Nasional Food (McDonald's), franchise operations of Burger King, Pizza Hut, etc.
 
+=== FINDINGS GROUPING RULES (CRITICAL) ===
+
+You MUST follow these rules when generating findings:
+
+1. DO NOT create a separate finding for each individual page where the same pattern appears.
+   Instead, GROUP related instances into ONE finding per evasion pattern per distinct theme.
+
+2. For example, if hedging language like "aim to", "strive towards", "aspire to" appears on
+   pages 3, 6, 8, 12, 19, 25, 32, 41, 47 — create ONE finding with:
+   - title: "Pervasive Use of Non-Binding Hedging Language (26 instances)"
+   - page_number: set to the MOST SIGNIFICANT instance
+   - description: list ALL page numbers where detected — "Found on pages 3, 6, 8, 12, 19, 25, 32, 41, 47. Most critical instance on p.19 where the cage-free commitment is hedged..."
+   - exact_quote: use the MOST SIGNIFICANT quote (the one most relevant to cage-free/Indonesia)
+
+3. Maximum 3-5 findings per evasion pattern type. If a pattern appears 30 times across the report,
+   summarize into 1-3 grouped findings with the most significant instances highlighted.
+
+4. Each finding MUST have a UNIQUE, SPECIFIC title. NEVER repeat the same title across findings.
+   - BAD: "Frequent Use of Non-Binding Language" (repeated 35 times)
+   - GOOD: "Pervasive Hedging in Cage-Free Egg Commitment (26 instances)"
+   - GOOD: "Non-Binding Water Reduction Targets with Aspirational Wording (pp. 30-35)"
+   - GOOD: "Hedging Language in Circularity Goals vs. Binding Animal Welfare Claims"
+
+5. TARGET: 7-15 total findings per report is ideal. More than 20 findings indicates poor grouping.
+   Quality over quantity — each finding should be meaningful and distinct.
+
+6. For hedging_language specifically:
+   - Group ALL hedging instances into 1-3 findings maximum
+   - One finding for hedging in the PRIMARY commitment (cage-free eggs)
+   - One finding for hedging in SECONDARY commitments (if significantly different theme)
+   - Include total count and page list in the description
+   - The hedging_language_count field should still reflect the RAW total count of all hedging phrases
+
+7. For binding_commitment findings:
+   - Group into 1-2 findings maximum
+   - Highlight the strongest binding language found
+   - Include count in description
+
 === OUTPUT FORMAT ===
 
 You MUST output ONLY a valid JSON object with this exact structure:
@@ -255,10 +293,12 @@ INSTRUCTIONS:
 7. For Commitment Downgrade: Compare the strength of language in the executive summary vs. detailed sections. Look for scope narrowing, timeline softening, or added escape conditions.
 8. For Indonesia specifically: check if the country is mentioned, what status it has, and whether Permentan No. 32 of 2025 invalidates any "no framework" excuses.
 9. Count all binding vs. hedging language instances.
-10. Calculate the risk score using the STRICT SCORING ALGORITHM. Show your math in scoring_breakdown.
-11. Assign risk level STRICTLY based on score thresholds. Do NOT override.
-12. Run the VALIDATION CHECK before outputting.
-13. Output ONLY the JSON object. No other text.
+10. GROUP your findings following the FINDINGS GROUPING RULES. Maximum 3-5 findings per pattern type. Each title MUST be unique. Target 7-15 total findings. DO NOT create one finding per page — merge related instances.
+11. Calculate the risk score using the STRICT SCORING ALGORITHM. Show your math in scoring_breakdown.
+12. Assign risk level STRICTLY based on score thresholds. Do NOT override.
+13. Run the VALIDATION CHECK before outputting.
+14. FINAL CHECK: If you have more than 20 findings, you MUST go back and merge duplicates. No two findings should have the same title.
+15. Output ONLY the JSON object. No other text.
 
 BEGIN ANALYSIS:"""
 
