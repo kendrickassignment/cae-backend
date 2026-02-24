@@ -256,6 +256,99 @@ def score_to_level(score: int) -> str:
         return "critical"
 
 
+def deduplicate_findings(findings: list[dict]) -> list[dict]:
+    """
+    Merge findings with identical finding_type + similar titles.
+    Safety net — the AI prompt should already group them,
+    but if it doesn't, Python enforces it.
+    """
+    from collections import defaultdict
+
+    # Group by finding_type
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for f in findings:
+        groups[f["finding_type"]].append(f)
+
+    merged = []
+    for ftype, group_findings in groups.items():
+        if len(group_findings) <= 3:
+            # 3 or fewer findings of this type — keep all
+            merged.extend(group_findings)
+            continue
+
+        # Check if titles are identical/very similar
+        titles = [f["title"].lower().strip() for f in group_findings]
+        unique_titles = set(titles)
+
+        if len(unique_titles) <= 2:
+            # All findings have same/similar titles — MERGE into one
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+            sorted_findings = sorted(
+                group_findings,
+                key=lambda f: severity_order.get(f["severity"], 5)
+            )
+
+            main_finding = sorted_findings[0].copy()
+
+            # Collect all page numbers and quotes
+            all_pages = []
+            all_quotes = []
+            for f in group_findings:
+                if f.get("page_number") and f["page_number"] > 0:
+                    all_pages.append(f["page_number"])
+                if f.get("exact_quote") and f["exact_quote"] != "N/A":
+                    all_quotes.append(f["exact_quote"])
+
+            all_pages = sorted(set(all_pages))
+
+            # Build page reference string
+            page_list = ", ".join(f"p.{p}" for p in all_pages[:10])
+            if len(all_pages) > 10:
+                page_list += f" (+{len(all_pages) - 10} more)"
+
+            instance_count = len(group_findings)
+            main_finding["title"] = f"{main_finding['title']} ({instance_count} instances)"
+            main_finding["description"] = (
+                f"{main_finding.get('description', '')} "
+                f"[Detected {instance_count} instances across the report. "
+                f"Found on: {page_list}. "
+                f"Most significant occurrence on p.{all_pages[0] if all_pages else 'N/A'}.]"
+            ).strip()
+
+            # Keep up to 3 most distinct quotes
+            unique_quotes = list(dict.fromkeys(all_quotes))[:3]
+            if unique_quotes:
+                main_finding["exact_quote"] = " | ".join(unique_quotes)
+
+            merged.append(main_finding)
+
+            print(
+                f"\U0001f504 MERGED {instance_count} '{ftype}' findings into 1 "
+                f"(pages: {page_list})"
+            )
+        else:
+            # Different titles — keep up to 5 most severe
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+            sorted_findings = sorted(
+                group_findings,
+                key=lambda f: severity_order.get(f["severity"], 5)
+            )
+            kept = sorted_findings[:5]
+            merged.extend(kept)
+
+            if len(group_findings) > 5:
+                print(
+                    f"\u2702\ufe0f TRIMMED '{ftype}' findings from {len(group_findings)} to 5 "
+                    f"(kept highest severity)"
+                )
+
+    # Re-assign IDs
+    for i, f in enumerate(merged):
+        f["id"] = f"f-{i + 1}"
+
+    return merged
+
+
 def validate_analysis_result(result_data: dict, fallback_company: str | None = None) -> dict:
     """
     Validate and sanitize all AI output. This function enforces:
@@ -340,6 +433,15 @@ def validate_analysis_result(result_data: dict, fallback_company: str | None = N
             "paragraph": f.get("paragraph"),
             "country_affected": f.get("country_affected")
         })
+
+    # --- Deduplicate findings (safety net for AI over-reporting) ---
+    pre_dedup_count = len(validated_findings)
+    validated_findings = deduplicate_findings(validated_findings)
+    if len(validated_findings) != pre_dedup_count:
+        print(
+            f"\U0001f9f9 DEDUP: {pre_dedup_count} findings \u2192 {len(validated_findings)} findings "
+            f"(company: {result_data.get('company_name', 'unknown')})"
+        )
 
     # --- Boolean validation ---
     indo_mentioned = result_data.get("indonesia_mentioned")
