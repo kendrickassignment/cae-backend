@@ -391,8 +391,9 @@ PROVIDER_GUIDE = """
 ║              CAE — LLM PROVIDER GUIDE (2026)                ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
-║  🥇 GEMINI (Recommended — FREE)                             ║
-║     Model: gemini-2.5-flash (latest)                         ║
+║  🥇 GEMINI (Recommended )                                   ║
+║     Stage 1: gemini-3.0-flash (fast scan)                    ║
+║     Stage 2: gemini-3.1-pro (escalation for high risk)       ║                       
 ║     Context: 1M tokens (handles full 300-page PDFs!)         ║
 ║     Free: 15 req/min, 1M tokens/min                          ║
 ║     Best for: Large documents, single-pass analysis          ║
