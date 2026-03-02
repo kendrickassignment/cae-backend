@@ -5,10 +5,12 @@ Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 Main application file. Provides REST API endpoints for:
  - PDF upload and parsing
  - AI-powered greenwashing analysis
+ - Hybrid Gemini routing (3.0 Flash → 3.1 Pro escalation)
+ - Multi-file merge analysis (/analyze-multi)
  - Results retrieval
  - Health checks and provider testing
 
-Updated: Feb 2026 — Added document_confidence support, 9 evasion patterns
+Updated: Mar 2026 — Hybrid Gemini + Multi-file merge
 
 Deploy FREE on: Render.com, Railway.app, or Fly.io
 
@@ -58,6 +60,7 @@ async def lifespan(app: FastAPI):
     print(" CORPORATE ACCOUNTABILITY ENGINE (CAE)")
     print(" Built for Sinergia Animal International / AFFA")
     print(" 9 Evasion Patterns + AI Confidence Check")
+    print(" Hybrid Gemini: 3.0 Flash → 3.1 Pro Escalation")
     print(" Strict Scoring Algorithm v2.1")
     print("=" * 60)
     print(f" LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
@@ -71,11 +74,12 @@ app = FastAPI(
     title="Corporate Accountability Engine (CAE)",
     description=(
         "Adversarial AI auditor for corporate sustainability reports. "
-        "Detects greenwashing in cage-free egg commitments with focus on Southeast Asia. "
+        "Detects greenwashing in cage-free egg commitments with focus on Indonesia. "
         "9 evasion patterns + AI document confidence check. "
+        "Hybrid Gemini routing: 3.0 Flash → 3.1 Pro escalation. "
         "Built for Sinergia Animal International / AFFA."
     ),
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan
 )
 
@@ -150,6 +154,14 @@ class AnalyzeRequest(BaseModel):
     report_year: int | None = None
     provider: str | None = None # gemini, groq, mistral, openai
     api_key: str | None = None # Optional override
+
+class AnalyzeMultiRequest(BaseModel):
+    """Request to analyze multiple uploaded PDFs as one merged analysis."""
+    report_ids: list[str] = Field(..., min_length=1, max_length=10)
+    company_name: str | None = None
+    report_year: int | None = None
+    provider: str | None = None
+    api_key: str | None = None
 
 class ProviderTestRequest(BaseModel):
     provider: str
@@ -487,10 +499,6 @@ def validate_analysis_result(result_data: dict, fallback_company: str | None = N
 # BACKGROUND ANALYSIS TASK
 # ============================================================================
 
-# ============================================================================
-# BACKGROUND ANALYSIS TASK
-# ============================================================================
-
 async def run_analysis(
     report_id: str,
     file_path: str,
@@ -660,6 +668,222 @@ async def run_analysis(
         reports_store[report_id]["error"] = str(e)
         print(f"Analysis failed for report {report_id}: {e}")
 
+
+# ============================================================================
+# BACKGROUND MULTI-FILE ANALYSIS TASK
+# ============================================================================
+
+async def run_multi_analysis(
+    primary_report_id: str,
+    report_ids: list[str],
+    company_name: str | None,
+    report_year: int | None,
+    provider_name: str | None,
+    api_key: str | None
+):
+    """
+    Background task: parse MULTIPLE PDFs → merge text → hybrid analysis → ONE result.
+    Used by /analyze-multi endpoint.
+    """
+    analysis_id = str(uuid.uuid4())
+
+    try:
+        # Update primary report status
+        reports_store[primary_report_id]["status"] = "processing"
+
+        # Parse all PDFs and collect text
+        all_texts = []
+        total_pages = 0
+        file_names = []
+
+        for rid in report_ids:
+            report = reports_store[rid]
+            file_path = report["file_path"]
+
+            temp_path = file_path + ".processing.pdf"
+            shutil.copy2(file_path, temp_path)
+
+            try:
+                parsed_doc = parse_pdf(temp_path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+            page_offset = total_pages
+            total_pages += parsed_doc.page_count
+            file_names.append(parsed_doc.file_name)
+
+            # Add document separator with file info
+            doc_header = (
+                f"\n\n{'=' * 60}\n"
+                f"=== [DOCUMENT {len(all_texts) + 1}: {parsed_doc.file_name} "
+                f"(pages {page_offset + 1}-{page_offset + parsed_doc.page_count})] ===\n"
+                f"{'=' * 60}\n\n"
+            )
+            all_texts.append(doc_header + parsed_doc.full_text_with_markers)
+
+            # Update individual report metadata
+            reports_store[rid]["page_count"] = parsed_doc.page_count
+            reports_store[rid]["status"] = "analyzing"
+
+        # Merge all text
+        merged_text = "\n".join(all_texts)
+        merged_file_name = f"MERGED: {', '.join(file_names)}"
+
+        print(
+            f"  📎 Merged {len(report_ids)} documents: "
+            f"{total_pages} total pages, "
+            f"{len(merged_text)} chars"
+        )
+
+        reports_store[primary_report_id]["status"] = "analyzing"
+
+        # Prepare text with context window limits
+        estimated_tokens = len(merged_text) // 4
+        effective_provider = provider_name or os.getenv("LLM_PROVIDER", "gemini")
+
+        context_limits = {
+            "gemini": 900_000,
+            "groq": 120_000,
+            "mistral": 28_000,
+            "openai": 120_000,
+        }
+
+        max_tokens = context_limits.get(effective_provider, 120_000)
+
+        if estimated_tokens > max_tokens:
+            char_limit = max_tokens * 4
+            half = char_limit // 2
+            merged_text = (
+                merged_text[:half]
+                + "\n\n--- [DOCUMENT TRUNCATED FOR CONTEXT LIMIT — MIDDLE SECTIONS OMITTED] ---\n\n"
+                + merged_text[-half:]
+            )
+            print(f"  📄 Merged text truncated: {estimated_tokens} tokens → ~{max_tokens} tokens")
+
+        # Build the adversarial prompt
+        messages = build_analysis_prompt(
+            document_text=merged_text,
+            file_name=merged_file_name,
+            page_count=total_pages
+        )
+
+        # ====================================================================
+        # HYBRID ROUTING (same logic as run_analysis)
+        # ====================================================================
+        final_model = ""
+        final_input_tokens = 0
+        final_output_tokens = 0
+        final_cost = 0.0
+
+        if effective_provider == "gemini":
+            print(f"  ⚡ [TAHAP 1] Fast Scan merged docs dengan Gemini 3.0 Flash...")
+            from llm_providers import GeminiProvider
+
+            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.0-flash")
+            flash_response = await flash_provider.analyze(messages)
+            result_data = parse_llm_json(flash_response.content)
+
+            raw_score = int(result_data.get("overall_risk_score", 0))
+            indo_mentioned = result_data.get("indonesia_mentioned")
+            indo_status = str(result_data.get("indonesia_status", "")).lower()
+
+            needs_pro = False
+            routing_reason = ""
+
+            if raw_score >= 56:
+                needs_pro = True
+                routing_reason = f"Skor risiko tinggi ({raw_score} - High/Critical)"
+            elif indo_mentioned is False or indo_status == "silent":
+                needs_pro = True
+                routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
+
+            if needs_pro:
+                print(f"  🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
+                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                pro_response = await pro_provider.analyze(messages)
+
+                result_data = parse_llm_json(pro_response.content)
+                final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
+                final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
+            else:
+                print("  ✅ Merged report tampak aman. Menyelesaikan dengan hasil Flash saja.")
+                final_model = "gemini-3.0-flash"
+                final_input_tokens = flash_response.input_tokens
+                final_output_tokens = flash_response.output_tokens
+
+            final_cost = 0.0
+
+        else:
+            provider = get_provider(provider_name=effective_provider, api_key=api_key)
+            llm_response = await provider.analyze(messages)
+            result_data = parse_llm_json(llm_response.content)
+
+            final_model = llm_response.model
+            final_input_tokens = llm_response.input_tokens
+            final_output_tokens = llm_response.output_tokens
+            final_cost = llm_response.cost_estimate_usd
+
+        # Validate
+        validated = validate_analysis_result(result_data, company_name)
+
+        # Store ONE result
+        analysis_result = {
+            "id": analysis_id,
+            "report_id": primary_report_id,
+            "merged_report_ids": report_ids,
+            "merged_file_count": len(report_ids),
+            "company_name": validated["company_name"],
+            "report_year": validated["report_year"] or report_year,
+            "overall_risk_level": validated["overall_risk_level"],
+            "overall_risk_score": validated["overall_risk_score"],
+            "global_claim": validated["global_claim"],
+            "indonesia_mentioned": validated["indonesia_mentioned"],
+            "indonesia_status": validated["indonesia_status"],
+            "sea_countries_mentioned": validated["sea_countries_mentioned"],
+            "sea_countries_excluded": validated["sea_countries_excluded"],
+            "binding_language_count": validated["binding_language_count"],
+            "hedging_language_count": validated["hedging_language_count"],
+            "summary": validated["summary"],
+            "findings": validated["findings"],
+            "document_confidence": validated["document_confidence"],
+            "document_confidence_reason": validated["document_confidence_reason"],
+            "scoring_breakdown": validated["scoring_breakdown"],
+            "llm_provider": effective_provider,
+            "llm_model": final_model,
+            "input_tokens": final_input_tokens,
+            "output_tokens": final_output_tokens,
+            "cost_estimate_usd": final_cost,
+            "analyzed_at": datetime.utcnow().isoformat()
+        }
+
+        analysis_store[analysis_id] = analysis_result
+
+        result_path = RESULTS_DIR / f"{analysis_id}.json"
+        with open(result_path, "w") as f:
+            json.dump(analysis_result, f, indent=2)
+
+        # Mark ALL reports as completed with same analysis_id
+        for rid in report_ids:
+            reports_store[rid]["status"] = "completed"
+            reports_store[rid]["analysis_id"] = analysis_id
+            reports_store[rid]["company_name"] = analysis_result["company_name"]
+
+        print(
+            f"  🎉 Multi-analysis selesai! "
+            f"{len(report_ids)} files merged → 1 result. "
+            f"Model: {final_model}"
+        )
+
+    except Exception as e:
+        for rid in report_ids:
+            if rid in reports_store:
+                reports_store[rid]["status"] = "failed"
+                reports_store[rid]["error"] = str(e)
+        print(f"Multi-analysis failed: {e}")
+
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -669,15 +893,21 @@ async def root(request: Request):
     """Health check and API info. Supports both GET and HEAD for Render health checks."""
     body = {
         "name": "Corporate Accountability Engine (CAE)",
-        "version": "2.0.0",
+        "version": "2.2.0",
         "organization": "Sinergia Animal International / AFFA",
         "status": "operational",
         "evasion_patterns": 9,
-        "features": ["9 evasion patterns", "AI confidence check", "document verification"],
+        "features": [
+            "9 evasion patterns",
+            "AI confidence check",
+            "Hybrid Gemini: 3.0 Flash → 3.1 Pro escalation",
+            "Multi-file merge analysis",
+        ],
         "docs": "/docs",
         "endpoints": {
             "upload": "POST /upload",
             "analyze": "POST /analyze",
+            "analyze_multi": "POST /analyze-multi",
             "status": "GET /reports/{report_id}",
             "result": "GET /analysis/{analysis_id}",
             "all_reports": "GET /reports",
@@ -694,7 +924,7 @@ async def root(request: Request):
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health(request: Request):
     """Simple health check for uptime monitoring."""
-    body = {"status": "ok", "version": "2.1.0", "timestamp": datetime.utcnow().isoformat()}
+    body = {"status": "ok", "version": "2.2.0", "timestamp": datetime.utcnow().isoformat()}
 
     if request.method == "HEAD":
         return Response(status_code=200)
@@ -749,12 +979,13 @@ async def upload_report(file: UploadFile = File(...)):
         message="PDF uploaded successfully. Send POST /analyze to start analysis."
     )
 
-# --- ANALYZE ---
+# --- ANALYZE (single file) ---
 
 @app.post("/analyze")
 async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """
     Trigger AI analysis on an uploaded report.
+    Uses hybrid Gemini routing: 3.0 Flash → 3.1 Pro escalation.
 
     The analysis runs in the background. Poll GET /reports/{report_id}
     to check status, then GET /analysis/{analysis_id} for results.
@@ -796,7 +1027,76 @@ async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTa
     return {
         "report_id": report_id,
         "status": "processing",
-        "message": "Analysis started. Poll GET /reports/{report_id} for status updates.",
+        "message": "Analysis started (Hybrid Gemini). Poll GET /reports/{report_id} for status updates.",
+        "provider": request.provider or os.getenv("LLM_PROVIDER", "gemini")
+    }
+
+# --- ANALYZE MULTI (merge multiple files) ---
+
+@app.post("/analyze-multi")
+async def analyze_multi_report(request: AnalyzeMultiRequest, background_tasks: BackgroundTasks):
+    """
+    Trigger AI analysis on MULTIPLE uploaded reports, merged into ONE analysis.
+
+    Upload each PDF separately via POST /upload, then call this endpoint
+    with all report_ids. The system will:
+    1. Parse all PDFs
+    2. Merge extracted text with document separators
+    3. Run ONE hybrid Gemini analysis on the combined text
+    4. Store ONE analysis result
+
+    Poll GET /reports/{primary_report_id} for status (first report_id in the list).
+    Max: 10 files per request.
+    """
+    # Validate all report_ids exist
+    for rid in request.report_ids:
+        if rid not in reports_store:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Report {rid} not found. Upload all files first via POST /upload."
+            )
+
+    # Check none are already processing
+    for rid in request.report_ids:
+        if reports_store[rid]["status"] in ("processing", "analyzing"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Report {rid} is already being analyzed."
+            )
+
+    if request.provider and request.provider not in PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown provider: {request.provider}. Available: {', '.join(PROVIDERS.keys())}"
+        )
+
+    # Update metadata on all reports
+    for rid in request.report_ids:
+        if request.company_name:
+            reports_store[rid]["company_name"] = request.company_name
+        if request.report_year:
+            reports_store[rid]["report_year"] = request.report_year
+
+    primary_report_id = request.report_ids[0]
+
+    background_tasks.add_task(
+        run_multi_analysis,
+        primary_report_id=primary_report_id,
+        report_ids=request.report_ids,
+        company_name=request.company_name,
+        report_year=request.report_year,
+        provider_name=request.provider,
+        api_key=request.api_key
+    )
+
+    return {
+        "report_id": primary_report_id,
+        "status": "processing",
+        "merged_files": len(request.report_ids),
+        "message": (
+            f"Multi-analysis started ({len(request.report_ids)} files merged). "
+            f"Poll GET /reports/{primary_report_id} for status updates."
+        ),
         "provider": request.provider or os.getenv("LLM_PROVIDER", "gemini")
     }
 
@@ -910,8 +1210,12 @@ async def list_providers():
         "default": os.getenv("LLM_PROVIDER", "gemini"),
         "available": {
             "gemini": {
-                "name": "Google Gemini",
-                "model": "gemini-2.5-flash",
+                "name": "Google Gemini (Hybrid)",
+                "models": {
+                    "fast": "gemini-3.0-flash",
+                    "pro": "gemini-3.1-pro"
+                },
+                "routing": "Auto-escalates to 3.1 Pro for high-risk reports",
                 "free": True,
                 "context_window": "1M tokens",
                 "best_for": "Large documents (200+ pages), single-pass analysis",
