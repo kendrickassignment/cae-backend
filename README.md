@@ -21,8 +21,8 @@ Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 | **Frontend** | Lovable | $25/month | React hosting + deployment |
 | **Database** | Supabase | Free | PostgreSQL + Auth + Storage + Realtime |
 | **Email** | Resend | Free | 100 emails/day |
-| **Domain** | cae-animals.com | $1/year | Custom domain |
-| **Total** |  | **~$326 + API Usage** | API costs deducted from $300 prepaid balance |
+| **Domain** | cae-animals.com | $6/year | Custom domain |
+| **Total** |  | **~$331 + API Usage** | API costs deducted from $300 prepaid balance |
 
 ---
 
