@@ -77,33 +77,25 @@ async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.
     
     raise last_exception
 
-
 # ============================================================================
-# PROVIDER 1: GOOGLE GEMINI (FREE)
+# PROVIDER 1: GOOGLE GEMINI (HYBRID 3.0 FLASH & 3.1 PRO)
 # ============================================================================
 
 class GeminiProvider(BaseLLMProvider):
     """
-    Google Gemini API — FREE TIER
-    - Model: gemini-2.5-flash (latest as of Feb 2026)
-    - Free: 15 requests/min, 1 million tokens/min
-    - Context window: 1M tokens (can handle entire 300-page PDFs!)
-    - Best free option for large documents.
-
-    Get your free API key: https://aistudio.google.com/apikey
+    Google Gemini API 
+    Mendukung Gemini 3.0 Flash (Kecepatan) dan Gemini 3.1 Pro (Penalaran Mendalam).
     """
-
-    def __init__(self, api_key: str = None):
+    # Default model diperbarui ke gemini-3.0-flash
+    def __init__(self, api_key: str = None, model_name: str = "gemini-3.0-flash"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required. Get free at https://aistudio.google.com/apikey")
-        self.model = "gemini-2.5-flash"
+        
+        self.model = model_name
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
-        """Send analysis request to Gemini API with automatic retry on rate limit."""
-
-        # Convert OpenAI-style messages to Gemini format
         system_text = ""
         user_text = ""
         for msg in messages:
@@ -113,34 +105,26 @@ class GeminiProvider(BaseLLMProvider):
                 user_text = msg["content"]
 
         payload = {
-            "contents": [
-                {
-                    "parts": [{"text": user_text}]
-                }
-            ],
-            "systemInstruction": {
-                "parts": [{"text": system_text}]
-            },
+            "contents": [{"parts": [{"text": user_text}]}],
+            "systemInstruction": {"parts": [{"text": system_text}]},
             "generationConfig": {
-                "temperature": 0.1,  # Low temp for precise, factual analysis
+                "temperature": 0.1,  
                 "topP": 0.95,
-                "maxOutputTokens": 65536,  # Large output for detailed 300-page analysis
-                "responseMimeType": "application/json"  # Force JSON output
+                "maxOutputTokens": 65536,  
+                "responseMimeType": "application/json"  
             }
         }
 
         url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
 
         async def _make_request():
-            async with httpx.AsyncClient(timeout=180.0) as client:  # 3 min timeout for large docs
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 return response.json()
 
-        # Retry up to 3 times on 429 errors with 15s/30s/60s backoff
         data = await retry_with_backoff(_make_request)
 
-        # Extract response
         content = data["candidates"][0]["content"]["parts"][0]["text"]
         usage = data.get("usageMetadata", {})
 
@@ -151,7 +135,7 @@ class GeminiProvider(BaseLLMProvider):
             input_tokens=usage.get("promptTokenCount", 0),
             output_tokens=usage.get("candidatesTokenCount", 0),
             total_tokens=usage.get("totalTokenCount", 0),
-            cost_estimate_usd=0.0  # Free tier!
+            cost_estimate_usd=0.0
         )
 
 
