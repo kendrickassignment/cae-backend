@@ -2,15 +2,15 @@
 Corporate Accountability Engine (CAE) — LLM Provider Abstraction
 Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
-Supports multiple FREE LLM providers:
-  1. Google Gemini (Free tier — gemini-2.5-flash, 1M tokens)
+Supports multiple FREE LLM providers, with Hybrid Routing for Gemini:
+  1. Google Gemini (Hybrid: gemini-3.0-flash for fast scan, gemini-3.1-pro for deep analysis)
   2. Groq (Free tier — Llama 3, 30 RPM)
   3. Mistral (Free tier — mistral-small)
   4. OpenAI (Paid — GPT-4o, if grant money comes through)
 
 All providers use the same interface so you can swap with a single env var.
 
-Updated: Feb 2026 — Gemini 2.5 Flash (gemini-2.0-flash is deprecated)
+Updated: March 2026 — Upgraded to Gemini 3.0 Flash & Gemini 3.1 Pro (Hybrid Routing setup)
 """
 
 import os
