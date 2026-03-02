@@ -12,47 +12,52 @@ Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 ## 💰 Cost
 
 | Component | Service | Cost | Notes |
-| :--- | :--- | :--- | :--- |
-| **AI (Default)** | Google Gemini API | Free | 15 req/min, 1M token context |
+| --- | --- | --- | --- |
+| **AI (Default)** | Google Gemini API (3.0 Flash & 3.1 Pro) | Paid ($300 Balance) | **Hybrid Routing enabled.** 25 req/min, 1M token context |
 | **AI (Backup)** | Groq API | Free | 30 req/min, 131K context |
 | **AI (Backup 2)** | Mistral API | Free | 32K context |
-| **AI (Premium)** | OpenAI API (GPT-4o) | ~$25/month | 128K context, highest quality |
 | **Hosting** | Render.com | Free | Free tier |
 | **PDF Parsing** | PyMuPDF | Free | Open-source |
 | **Frontend** | Lovable | $25/month | React hosting + deployment |
 | **Database** | Supabase | Free | PostgreSQL + Auth + Storage + Realtime |
 | **Email** | Resend | Free | 100 emails/day |
 | **Domain** | cae-animals.com | $1/year | Custom domain |
-| **Total (free AI)** | | **~$26/month** | Using Gemini/Groq/Mistral |
-| **Total (with OpenAI)** | | **~$51/month** | Using GPT-4o |
+| **Total** |  | **~$326 + API Usage** | API costs deducted from $300 prepaid balance |
 
 ---
 
 ## 🚀 Quick Start (Local)
 
 ### 1. Clone and install
+
 ```bash
 git clone https://github.com/kendrickassignment/cae-backend.git
 cd cae-backend
 pip install -r requirements.txt
+
 ```
 
-### 2. Get your FREE API key
-Go to [Google AI Studio](https://aistudio.google.com/apikey) and create a Gemini API key.
+### 2. Get your API key
+
+Go to [Google AI Studio](https://aistudio.google.com/apikey) and create a Gemini API key. Make sure your billing account is linked to access the Paid Tier models and higher rate limits.
 
 ### 3. Configure environment
+
 ```bash
 cp .env.example .env
 # Edit .env — see Environment Variables section below
+
 ```
 
 ### 4. Run the server
+
 ```bash
 python main.py
+
 ```
 
-- Server starts at `http://localhost:8000`
-- API docs at `http://localhost:8000/docs` (interactive Swagger UI)
+* Server starts at `http://localhost:8000`
+* API docs at `http://localhost:8000/docs` (interactive Swagger UI)
 
 ### 5. Test it
 
@@ -71,6 +76,7 @@ curl http://localhost:8000/reports/YOUR_REPORT_ID
 
 # Get results (use analysis_id from status response)
 curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
+
 ```
 
 ---
@@ -98,17 +104,22 @@ curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
 2. **Duplicate Check:** SHA-256 file hash compared against existing analyses. Company + year combination also checked. User can proceed or view existing.
 3. **Parse:** PyMuPDF extracts all text with page numbers. Footnotes, tables, and appendices are specially tagged.
 4. **Prompt:** The adversarial system prompt tells the AI to act as a strict compliance officer hunting for **9 greenwashing evasion patterns**.
-5. **Analyze:** The LLM processes the full document and returns structured JSON with findings, risk scores, and exact page citations.
+5. **Hybrid AI Analysis (The Engine):** - **Stage 1 (Fast Scan):** The system uses `gemini-3.0-flash` to rapidly scan the document and extract initial findings.
+* **Stage 2 (Pro Escalation):** If the initial scan detects severe greenwashing (Score >= 56) OR "Strategic Silence" (Indonesia is omitted), the system automatically routes the query to `gemini-3.1-pro` for deep adversarial reasoning and evidence extraction.
+
+
 6. **Deduplicate:** Two-layer system removes noisy/duplicate findings:
-   - **AI Prompt Layer** — instructs LLM to group related findings (max 3-5 per pattern, target 7-15 total)
-   - **Python Safety Net** — `deduplicate_findings()` merges identical findings server-side, collecting all page references into one grouped finding
+* **AI Prompt Layer** — instructs LLM to group related findings (max 3-5 per pattern, target 7-15 total)
+* **Python Safety Net** — `deduplicate_findings()` merges identical findings server-side, collecting all page references into one grouped finding
+
+
 7. **Score:** Deterministic, tamper-proof scoring — AI suggests a score, Python enforces `score_to_level()` mapping. AI cannot override the risk level.
 8. **Store:** Results saved to Supabase PostgreSQL with Row Level Security. Admin notifications triggered via edge functions.
 
 ### The 9 Evasion Patterns Detected
 
 | # | Pattern | Description | Severity |
-|---|---------|-------------|----------|
+| --- | --- | --- | --- |
 | 1 | **Hedging Language** | "We aim to", "where feasible" — soft language avoiding binding commitments | 🟡 Medium |
 | 2 | **Strategic Silence** | Indonesia not mentioned at all in cage-free context | 🔴 Critical |
 | 3 | **Geographic Tiering** | "Leading markets" get real commitments; everywhere else gets vague deadlines | 🔴 Critical |
@@ -128,10 +139,11 @@ def score_to_level(score: int) -> str:
     if score >= 56: return "high"
     if score >= 31: return "medium"
     return "low"
+
 ```
 
 | Factor | Points | Condition |
-|---|---|---|
+| --- | --- | --- |
 | **Strategic Silence** | +35 | Indonesia not mentioned in cage-free context |
 | **Geographic Exclusion** | +30 | Indonesia explicitly excluded |
 | **Franchise Firewall** | +15 | Commitments limited to company-owned |
@@ -162,8 +174,8 @@ def score_to_level(score: int) -> str:
 ## ⚙️ Environment Variables
 
 | Variable | Required | Description |
-|---|---|---|
-| `GEMINI_API_KEY` | ✅ | Google AI Studio API key (default provider) |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | ✅ | Google AI Studio API key (Paid tier account required for Pro model) |
 | `GROQ_API_KEY` | Optional | Groq API key (backup provider) |
 | `MISTRAL_API_KEY` | Optional | Mistral API key (backup provider) |
 | `OPENAI_API_KEY` | Optional | OpenAI API key (premium provider, ~$25/month) |
@@ -178,8 +190,9 @@ def score_to_level(score: int) -> str:
 ## 🔄 Switching AI Providers
 
 Set the `LLM_PROVIDER` environment variable:
+
 ```bash
-# Use Gemini (default — best for large docs, 1M token context)
+# Use Gemini (default — best for large docs, 1M token context, hybrid routing)
 LLM_PROVIDER=gemini
 
 # Use Groq (fastest inference, 131K context)
@@ -190,6 +203,7 @@ LLM_PROVIDER=mistral
 
 # Use OpenAI (highest quality, ~$25/month)
 LLM_PROVIDER=openai
+
 ```
 
 Or override per-request in the `/analyze` endpoint:
@@ -200,13 +214,14 @@ Or override per-request in the `/analyze` endpoint:
   "provider": "groq",
   "api_key": "your-groq-key"
 }
+
 ```
 
 ### AI Provider Comparison
 
 | Provider | Model | Context Window | Cost | Best For |
-|---|---|---|---|---|
-| **Google Gemini** | `gemini-2.5-flash` | 1M tokens | Free | Large documents (200+ pages) — **Recommended** |
+| --- | --- | --- | --- | --- |
+| **Google Gemini** | `gemini-3.0-flash` & `gemini-3.1-pro` | 1M tokens | Paid Tier ($300 Balance) | Large documents (200+ pages), deep adversarial analysis — **Recommended** |
 | **Groq** | `llama-3.3-70b-versatile` | 131K tokens | Free | Fast inference, medium documents |
 | **Mistral** | `mistral-small-latest` | 32K tokens | Free | Backup, multilingual analysis |
 | **OpenAI** | `gpt-4o` | 128K tokens | ~$25/month | Highest quality analysis |
@@ -215,12 +230,12 @@ Or override per-request in the `/analyze` endpoint:
 
 ## 🔒 Security
 
-- ✅ **CORS** restricted to `FRONTEND_URL` (cae-animals.com) — rejects unauthorized origins
-- ✅ **Supabase service role** used only server-side for storing results and triggering notifications
-- ✅ **Tamper-proof scoring** — Python enforces `score_to_level()`, AI cannot override risk levels
-- ✅ **SHA-256 file hashing** for duplicate PDF detection
-- ✅ **Input validation** on all endpoints
-- ✅ **No API keys stored server-side** — users provide their own keys per-request or via settings
+* ✅ **CORS** restricted to `FRONTEND_URL` (cae-animals.com) — rejects unauthorized origins
+* ✅ **Supabase service role** used only server-side for storing results and triggering notifications
+* ✅ **Tamper-proof scoring** — Python enforces `score_to_level()`, AI cannot override risk levels
+* ✅ **SHA-256 file hashing** for duplicate PDF detection
+* ✅ **Input validation** on all endpoints
+* ✅ **No API keys stored server-side** — users provide their own keys per-request or via settings
 
 ---
 
@@ -228,7 +243,7 @@ Or override per-request in the `/analyze` endpoint:
 
 ```text
 cae-backend/
-├── main.py              # FastAPI app — all endpoints
+├── main.py              # FastAPI app — all endpoints & hybrid routing logic
 ├── pdf_parser.py        # Forensic PDF parser (PyMuPDF)
 ├── llm_providers.py     # Multi-provider LLM abstraction
 ├── system_prompt.py     # Adversarial AI prompt (the brain)
@@ -239,6 +254,7 @@ cae-backend/
 ├── README.md            # This file
 ├── uploads/             # Uploaded PDFs (created at runtime)
 └── results/             # Analysis JSON results (created at runtime)
+
 ```
 
 ---
