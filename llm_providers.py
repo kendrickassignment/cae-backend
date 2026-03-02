@@ -125,7 +125,27 @@ class GeminiProvider(BaseLLMProvider):
 
         data = await retry_with_backoff(_make_request)
 
-        content = data["candidates"][0]["content"]["parts"][0]["text"]
+        try:
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise ValueError(f"No candidates in response. Keys: {list(data.keys())}")
+            
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                raise ValueError(f"No parts in response. Candidate keys: {list(candidates[0].keys())}")
+            
+            # Thinking models return multiple parts — thinking first, answer last
+            # Take the LAST text part (the actual JSON response)
+            content = ""
+            for part in parts:
+                if "text" in part:
+                    content = part["text"]
+            
+            if not content:
+                raise ValueError(f"No text found in parts. Parts: {json.dumps(parts)[:500]}")
+                
+        except (KeyError, IndexError) as e:
+            raise ValueError(f"Gemini response parse error: {e}. Response: {json.dumps(data)[:500]}")
         usage = data.get("usageMetadata", {})
 
         return LLMResponse(
