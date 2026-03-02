@@ -487,6 +487,10 @@ def validate_analysis_result(result_data: dict, fallback_company: str | None = N
 # BACKGROUND ANALYSIS TASK
 # ============================================================================
 
+# ============================================================================
+# BACKGROUND ANALYSIS TASK
+# ============================================================================
+
 async def run_analysis(
     report_id: str,
     file_path: str,
@@ -547,16 +551,66 @@ async def run_analysis(
             page_count=parsed_doc.page_count
         )
 
-        # Step 5: Call the LLM
-        provider = get_provider(
-            provider_name=effective_provider,
-            api_key=api_key
-        )
+        # ====================================================================
+        # STEP 5 & 6: CALL LLM & PARSE (HYBRID ROUTING FOR GEMINI)
+        # ====================================================================
+        final_model = ""
+        final_input_tokens = 0
+        final_output_tokens = 0
+        final_cost = 0.0
 
-        llm_response: LLMResponse = await provider.analyze(messages)
+        if effective_provider == "gemini":
+            # --- TAHAP 1: FAST SCAN DENGAN GEMINI 3.0 FLASH ---
+            print(f"⚡ [TAHAP 1] Memulai Fast Scan dengan Gemini 3.0 Flash...")
+            from llm_providers import GeminiProvider
+            
+            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.0-flash")
+            flash_response = await flash_provider.analyze(messages)
+            result_data = parse_llm_json(flash_response.content)
+            
+            raw_score = int(result_data.get("overall_risk_score", 0))
+            indo_mentioned = result_data.get("indonesia_mentioned")
+            indo_status = str(result_data.get("indonesia_status", "")).lower()
 
-        # Step 6: Parse LLM response
-        result_data = parse_llm_json(llm_response.content)
+            # --- TAHAP 2: EVALUASI UNTUK ESCALATE KE PRO ---
+            needs_pro = False
+            routing_reason = ""
+
+            if raw_score >= 56:
+                needs_pro = True
+                routing_reason = f"Skor risiko tinggi ({raw_score} - High/Critical)"
+            elif indo_mentioned is False or indo_status == "silent":
+                needs_pro = True
+                routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
+
+            if needs_pro:
+                print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
+                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                pro_response = await pro_provider.analyze(messages)
+                
+                result_data = parse_llm_json(pro_response.content)
+                final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
+                final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
+            else:
+                print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
+                final_model = "gemini-3.0-flash"
+                final_input_tokens = flash_response.input_tokens
+                final_output_tokens = flash_response.output_tokens
+            
+            final_cost = 0.0 # Free/Kredit
+
+        else:
+            # --- JIKA MENGGUNAKAN PROVIDER LAIN (Groq, Mistral, dll) ---
+            provider = get_provider(provider_name=effective_provider, api_key=api_key)
+            llm_response = await provider.analyze(messages)
+            result_data = parse_llm_json(llm_response.content)
+            
+            final_model = llm_response.model
+            final_input_tokens = llm_response.input_tokens
+            final_output_tokens = llm_response.output_tokens
+            final_cost = llm_response.cost_estimate_usd
+
 
         # Step 6.5: HARD VALIDATION — Python code enforces rules AI cannot override
         validated = validate_analysis_result(result_data, company_name)
@@ -581,11 +635,11 @@ async def run_analysis(
             "document_confidence": validated["document_confidence"],
             "document_confidence_reason": validated["document_confidence_reason"],
             "scoring_breakdown": validated["scoring_breakdown"],
-            "llm_provider": llm_response.provider,
-            "llm_model": llm_response.model,
-            "input_tokens": llm_response.input_tokens,
-            "output_tokens": llm_response.output_tokens,
-            "cost_estimate_usd": llm_response.cost_estimate_usd,
+            "llm_provider": effective_provider,
+            "llm_model": final_model,
+            "input_tokens": final_input_tokens,
+            "output_tokens": final_output_tokens,
+            "cost_estimate_usd": final_cost,
             "analyzed_at": datetime.utcnow().isoformat()
         }
 
