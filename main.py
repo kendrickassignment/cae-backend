@@ -572,7 +572,7 @@ async def run_analysis(
             print(f"⚡ [TAHAP 1] Memulai Fast Scan dengan Gemini 3.0 Flash...")
             from llm_providers import GeminiProvider
             
-            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.0-flash")
+            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
             flash_response = await flash_provider.analyze(messages)
             result_data = parse_llm_json(flash_response.content)
             
@@ -593,16 +593,16 @@ async def run_analysis(
 
             if needs_pro:
                 print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
-                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
                 pro_response = await pro_provider.analyze(messages)
                 
                 result_data = parse_llm_json(pro_response.content)
-                final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
                 final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
                 final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
             else:
                 print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                final_model = "gemini-3.0-flash"
+                final_model = "gemini-3-flash-preview"
                 final_input_tokens = flash_response.input_tokens
                 final_output_tokens = flash_response.output_tokens
             
@@ -780,7 +780,7 @@ async def run_multi_analysis(
             print(f"  ⚡ [TAHAP 1] Fast Scan merged docs dengan Gemini 3.0 Flash...")
             from llm_providers import GeminiProvider
 
-            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.0-flash")
+            flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
             flash_response = await flash_provider.analyze(messages)
             result_data = parse_llm_json(flash_response.content)
 
@@ -800,16 +800,16 @@ async def run_multi_analysis(
 
             if needs_pro:
                 print(f"  🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
-                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
                 pro_response = await pro_provider.analyze(messages)
 
                 result_data = parse_llm_json(pro_response.content)
-                final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
                 final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
                 final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
             else:
                 print("  ✅ Merged report tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                final_model = "gemini-3.0-flash"
+                final_model = "gemini-3-flash-preview"
                 final_input_tokens = flash_response.input_tokens
                 final_output_tokens = flash_response.output_tokens
 
@@ -1212,8 +1212,8 @@ async def list_providers():
             "gemini": {
                 "name": "Google Gemini (Hybrid)",
                 "models": {
-                    "fast": "gemini-3.0-flash",
-                    "pro": "gemini-3.1-pro"
+                    "fast": "gemini-3-flash-preview",
+                    "pro": "gemini-3.1-pro-preview"
                 },
                 "routing": "Auto-escalates to 3.1 Pro for high-risk reports",
                 "free": True,
