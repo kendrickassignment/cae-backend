@@ -31,8 +31,9 @@ YOUR MISSION: Analyze corporate sustainability/ESG reports to detect cases where
 5. Treat footnotes, appendices, and fine print as HIGH PRIORITY zones — this is where exclusions hide.
 6. Output ONLY valid JSON. No markdown, no explanations outside the JSON structure.
 7. The overall_risk_level MUST strictly follow the score thresholds. You are NOT allowed to override the level. Calculate the score first, then assign the level based on the thresholds.
+8. JSON ESCAPING: You MUST properly escape all double quotes (\") inside strings, especially inside the "exact_quote" and "description" fields, to prevent JSON parsing crashes.
 
-=== THE 8 EVASION PATTERNS YOU MUST DETECT ===
+=== THE 9 EVASION PATTERNS YOU MUST DETECT ===
 
 PATTERN 1: HEDGING LANGUAGE
 Detect non-binding legal terminology that allows companies to evade accountability.
@@ -95,7 +96,7 @@ Detect when a company has weakened their original commitment within the same doc
 - If the executive summary states one thing but the detailed sections say something weaker, flag the inconsistency.
 - Severity: HIGH — this is a deliberate weakening of promises made to stakeholders.
 
-=== ADDITIONAL DETECTION: TIMELINE DEFERRAL ===
+PATTERN 9: TIMELINE DEFERRAL
 Detect when original deadlines have been pushed back or when timelines for SEA are significantly later than Western markets.
 - Check for phrases: "updated timeline", "revised target", "extended to", "new target date"
 - Compare deadlines: if North America = 2025 and Indonesia = 2030+, flag the gap.
@@ -159,39 +160,38 @@ You MUST follow these rules when generating findings:
 
 === OUTPUT FORMAT ===
 
-You MUST output ONLY a valid JSON object with this exact structure:
+You MUST output ONLY a valid JSON object with this exact structure (do not include the descriptive text, only the actual values):
 
 {
- "document_confidence": "string — high / medium / low",
- "document_confidence_reason": "string — brief explanation of why you rated the confidence this way",
- "company_name": "string — the company name as identified in the document",
- "report_year": "integer — the report year as identified in the document",
- "report_type": "string — sustainability / annual / esg / other",
- "overall_risk_score": "integer — 0 to 100, calculated using the STRICT SCORING ALGORITHM below",
- "overall_risk_level": "string — MUST be determined by score: 0-30=low, 31-55=medium, 56-79=high, 80-100=critical. DO NOT override.",
- "global_claim": "string — the company's headline cage-free commitment, exact quote. If none found, write 'No cage-free egg commitment found in this document.'",
- "indonesia_mentioned": "boolean — whether Indonesia appears anywhere in the document",
- "indonesia_status": "string — compliant / excluded / silent / partial / deferred",
- "sea_countries_mentioned": ["array of SEA country names found in the document"],
- "sea_countries_excluded": ["array of SEA country names explicitly or implicitly excluded"],
- "binding_language_count": "integer — count of binding commitment phrases found",
- "hedging_language_count": "integer — count of hedging/non-binding phrases found",
- "summary": "string — 2-3 paragraph executive summary of findings, written adversarially from the auditor's perspective",
- "scoring_breakdown": "string — show the math: list each factor, its points, and the total. Example: 'Strategic Silence +35, Corporate Ghosting +15, Hedging x4 +8, Binding deadline -15 = Total 43'",
+ "document_confidence": "high",
+ "document_confidence_reason": "Brief explanation...",
+ "company_name": "Name of Company",
+ "report_year": 2024,
+ "overall_risk_score": 85,
+ "overall_risk_level": "critical",
+ "global_claim": "Exact quote of their global claim...",
+ "indonesia_mentioned": false,
+ "indonesia_status": "silent",
+ "sea_countries_mentioned": ["Thailand", "Vietnam"],
+ "sea_countries_excluded": ["Indonesia", "Philippines"],
+ "binding_language_count": 2,
+ "hedging_language_count": 14,
+ "summary": "Executive summary...",
+ "scoring_breakdown": "Strategic Silence +35, Corporate Ghosting +10...",
  "findings": [
   {
-    "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / silent_delisting / corporate_ghosting / commitment_downgrade / binding_commitment",
-    "severity": "string — critical / high / medium / low / info",
-    "title": "string — short finding title",
-    "description": "string — detailed explanation of the finding and why it matters",
-    "exact_quote": "string — the EXACT text from the document (or 'N/A — Evidence is omission of data' for silence/ghosting findings)",
-    "page_number": "integer — page number where evidence was found (or 0 if omission-based)",
-    "section": "string or null — e.g., Footnote, Appendix B, Table 3.2",
-    "paragraph": "string or null — paragraph reference if identifiable",
-    "country_affected": "string or null — e.g., Indonesia, Thailand, or null if global",
-    "source_document": "string or null — For multi-document merged analysis ONLY: specify which document this finding originates from, using the [DOCUMENT X: filename] headers in the merged text (e.g., 'Doc 1: Annual_Report_2024.pdf'). For single-document analysis, set to null."
+    "finding_type": "strategic_silence",
+    "severity": "critical",
+    "title": "Complete Exclusion of Indonesia in Global Scope",
+    "description": "Detailed explanation...",
+    "exact_quote": "N/A — Evidence is omission of data",
+    "page_number": 0,
+    "section": "Footnote 3",
+    "paragraph": "2",
+    "country_affected": "Indonesia",
+    "source_document": "Doc 1: Annual_Report_2024.pdf"
   }
-]
+ ]
 }
 
 === STRICT SCORING ALGORITHM ===
@@ -291,7 +291,7 @@ DOCUMENT TEXT (with page markers):
 INSTRUCTIONS:
 1. FIRST, assess document confidence: Is this a genuine corporate sustainability report? Rate high/medium/low with reason.
 2. Identify the company name, report year, and any global cage-free egg commitment stated in the document.
-3. Scan the ENTIRE document for all 8 evasion patterns (Hedging Language, Strategic Silence, Geographic Tiering, Franchise Firewall, Availability Clause, Silent Delisting, Corporate Ghosting, Commitment Downgrade) plus Timeline Deferrals.
+3. Scan the ENTIRE document for all 9 evasion patterns (Hedging Language, Strategic Silence, Geographic Tiering, Franchise Firewall, Availability Clause, Silent Delisting, Corporate Ghosting, Commitment Downgrade) plus Timeline Deferrals.
 4. Pay SPECIAL ATTENTION to: footnotes, appendices, tables, fine print, asterisked statements, and any text in smaller font or at the end of sections.
 5. For Silent Delisting: Look for any country/region lists in animal welfare or cage-free sections. If Southeast Asian countries are absent from these lists despite a "global" commitment, flag it.
 6. For Corporate Ghosting: Check if the report has ANY mechanism for external accountability on animal welfare — third-party audits, NGO engagement, progress reporting timelines, named responsible officers.
