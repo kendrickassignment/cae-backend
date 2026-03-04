@@ -443,7 +443,8 @@ def validate_analysis_result(result_data: dict, fallback_company: str | None = N
             "page_number": page,
             "section": f.get("section"),
             "paragraph": f.get("paragraph"),
-            "country_affected": f.get("country_affected")
+            "country_affected": f.get("country_affected"),
+            "source_document": f.get("source_document")
         })
 
     # --- Deduplicate findings (safety net for AI over-reporting) ---
