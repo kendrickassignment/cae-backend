@@ -109,6 +109,15 @@ Rate your confidence as:
 
 Provide a brief reason for your confidence rating.
 
+IMPORTANT: If document_confidence is "medium" or "low", you MUST prepend 
+this disclaimer to the beginning of the "summary" field:
+"⚠️ This analysis is based on a [press release / partial document / 
+non-standard document], not a full sustainability report. The risk score 
+reflects only what is present (or absent) in this limited document. 
+A full report analysis may yield different results."
+Replace the bracketed text with the actual document type you identified.
+Then continue with the normal adversarial summary after the disclaimer.
+
 === INDONESIA-SPECIFIC INTELLIGENCE ===
 When analyzing Indonesia-related content, note:
 - Indonesia enacted Permentan No. 32 of 2025, which formally recognizes cage-free systems. This DISMANTLES the "no legal framework" excuse.
