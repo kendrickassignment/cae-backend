@@ -179,18 +179,19 @@ You MUST output ONLY a valid JSON object with this exact structure:
  "summary": "string — 2-3 paragraph executive summary of findings, written adversarially from the auditor's perspective",
  "scoring_breakdown": "string — show the math: list each factor, its points, and the total. Example: 'Strategic Silence +35, Corporate Ghosting +15, Hedging x4 +8, Binding deadline -15 = Total 43'",
  "findings": [
-   {
-     "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / silent_delisting / corporate_ghosting / commitment_downgrade / binding_commitment",
-     "severity": "string — critical / high / medium / low / info",
-     "title": "string — short finding title",
-     "description": "string — detailed explanation of the finding and why it matters",
-     "exact_quote": "string — the EXACT text from the document (or 'N/A — Evidence is omission of data' for silence/ghosting findings)",
-     "page_number": "integer — page number where evidence was found (or 0 if omission-based)",
-     "section": "string or null — e.g., Footnote, Appendix B, Table 3.2",
-     "paragraph": "string or null — paragraph reference if identifiable",
-     "country_affected": "string or null — e.g., Indonesia, Thailand, or null if global"
-   }
- ]
+  {
+    "finding_type": "string — hedging_language / geographic_exclusion / strategic_silence / franchise_firewall / availability_clause / timeline_deferral / silent_delisting / corporate_ghosting / commitment_downgrade / binding_commitment",
+    "severity": "string — critical / high / medium / low / info",
+    "title": "string — short finding title",
+    "description": "string — detailed explanation of the finding and why it matters",
+    "exact_quote": "string — the EXACT text from the document (or 'N/A — Evidence is omission of data' for silence/ghosting findings)",
+    "page_number": "integer — page number where evidence was found (or 0 if omission-based)",
+    "section": "string or null — e.g., Footnote, Appendix B, Table 3.2",
+    "paragraph": "string or null — paragraph reference if identifiable",
+    "country_affected": "string or null — e.g., Indonesia, Thailand, or null if global",
+    "source_document": "string or null — For multi-document merged analysis ONLY: specify which document this finding originates from, using the [DOCUMENT X: filename] headers in the merged text (e.g., 'Doc 1: Annual_Report_2024.pdf'). For single-document analysis, set to null."
+  }
+]
 }
 
 === STRICT SCORING ALGORITHM ===
