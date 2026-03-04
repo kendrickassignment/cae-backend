@@ -42,18 +42,18 @@ class BaseLLMProvider(ABC):
 
 
 # ============================================================================
-# RETRY HELPER — handles 429 (rate limit) automatically
+# RETRY HELPER — handles 429 & 50x (server errors) automatically
 # ============================================================================
 
 async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.0):
     """
     Retry an async function with exponential backoff.
-    Specifically handles 429 Too Many Requests from LLM providers.
+    Specifically handles 429 (Too Many Requests) and 50x (Server Errors) from LLM providers.
     
     Args:
         func: Async function to retry
         max_retries: Maximum number of retries (default 3)
-        base_delay: Base delay in seconds between retries (default 15s for rate limits)
+        base_delay: Base delay in seconds between retries (default 15s)
     
     Returns:
         The result of the function call
@@ -65,18 +65,24 @@ async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.
             return await func()
         except httpx.HTTPStatusError as e:
             last_exception = e
-            if e.response.status_code == 429 and attempt < max_retries:
-                # Rate limited — wait and retry
-                delay = base_delay * (2 ** attempt)  # 15s, 30s, 60s
-                print(f"  ⏳ Rate limited (429). Waiting {delay}s before retry {attempt + 1}/{max_retries}...")
+            status = e.response.status_code
+            
+            # Cek apakah error terkait limit (429) atau server Google sedang down (500, 502, 503, 504)
+            if status in (429, 500, 502, 503, 504) and attempt < max_retries:
+                # Waktu tunggu eksponensial: 15s, 30s, 60s
+                delay = base_delay * (2 ** attempt)  
+                
+                error_type = "Rate limited (429)" if status == 429 else f"Server error ({status})"
+                print(f"  ⏳ {error_type}. API LLM sibuk. Menunggu {delay} detik sebelum percobaan {attempt + 1}/{max_retries}...")
+                
                 await asyncio.sleep(delay)
             else:
+                # Jika error selain 429/50x (misal 400 Bad Request) atau jatah retry habis, hentikan.
                 raise
         except Exception as e:
             raise
     
     raise last_exception
-
 # ============================================================================
 # PROVIDER 1: GOOGLE GEMINI (HYBRID 3.0 FLASH & 3.1 PRO)
 # ============================================================================
