@@ -594,13 +594,26 @@ async def run_analysis(
 
             if needs_pro:
                 print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
-                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
-                pro_response = await pro_provider.analyze(messages)
+                try:
+                    pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
+                    pro_response = await pro_provider.analyze(messages)
+                    
+                    result_data = parse_llm_json(pro_response.content)
+                    final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
+                    final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
+                    final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
                 
-                result_data = parse_llm_json(pro_response.content)
-                final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
-                final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
-                final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
+                except Exception as pro_error:
+                    print(f"⚠️ [TAHAP 2 GAGAL] Gemini Pro bermasalah ({pro_error}). Menggunakan fallback hasil Flash.")
+                    
+                    # Kembalikan ke hasil Flash (Tahap 1)
+                    result_data = parse_llm_json(flash_response.content)
+                    catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
+                    result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
+                    
+                    final_model = "gemini-3-flash-preview (Pro Fallback)"
+                    final_input_tokens = flash_response.input_tokens
+                    final_output_tokens = flash_response.output_tokens
             else:
                 print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
                 final_model = "gemini-3-flash-preview"
@@ -800,16 +813,29 @@ async def run_multi_analysis(
                 routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
 
             if needs_pro:
-                print(f"  🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
-                pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
-                pro_response = await pro_provider.analyze(messages)
-
-                result_data = parse_llm_json(pro_response.content)
-                final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
-                final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
-                final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
+                print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
+                try:
+                    pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
+                    pro_response = await pro_provider.analyze(messages)
+                    
+                    result_data = parse_llm_json(pro_response.content)
+                    final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
+                    final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
+                    final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
+                
+                except Exception as pro_error:
+                    print(f"⚠️ [TAHAP 2 GAGAL] Gemini Pro bermasalah ({pro_error}). Menggunakan fallback hasil Flash.")
+                    
+                    # Kembalikan ke hasil Flash (Tahap 1)
+                    result_data = parse_llm_json(flash_response.content)
+                    catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
+                    result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
+                    
+                    final_model = "gemini-3-flash-preview (Pro Fallback)"
+                    final_input_tokens = flash_response.input_tokens
+                    final_output_tokens = flash_response.output_tokens
             else:
-                print("  ✅ Merged report tampak aman. Menyelesaikan dengan hasil Flash saja.")
+                print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
                 final_model = "gemini-3-flash-preview"
                 final_input_tokens = flash_response.input_tokens
                 final_output_tokens = flash_response.output_tokens
