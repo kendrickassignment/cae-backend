@@ -39,6 +39,12 @@ from llm_providers import get_provider, LLMResponse, PROVIDERS
 # CONFIG
 # ============================================================================
 
+MAX_FILE_SIZE_MB = 25
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+MAX_BATCH_FILES = 3
+MAX_BATCH_TOTAL_MB = 50
+MAX_BATCH_TOTAL_BYTES = MAX_BATCH_TOTAL_MB * 1024 * 1024
+
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -157,7 +163,7 @@ class AnalyzeRequest(BaseModel):
 
 class AnalyzeMultiRequest(BaseModel):
     """Request to analyze multiple uploaded PDFs as one merged analysis."""
-    report_ids: list[str] = Field(..., min_length=1, max_length=10)
+    report_ids: list[str] = Field(..., min_length=1, max_length=MAX_BATCH_FILES)
     company_name: str | None = None
     report_year: int | None = None
     provider: str | None = None
@@ -961,49 +967,50 @@ async def health(request: Request):
 # --- UPLOAD ---
 
 @app.post("/upload", response_model=UploadResponse)
-async def upload_report(file: UploadFile = File(...)):
-    """
-    Upload a PDF sustainability report for analysis.
-
-    Accepts: PDF files up to 50MB
-    Returns: report_id to use for triggering analysis
-    """
-    # Validate file type
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
-
-    # Validate file size (50MB limit)
-    contents = await file.read()
-    if len(contents) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large. Maximum 50MB.")
-
-    # Generate unique ID and save file
-    report_id = str(uuid.uuid4())
+async def upload_file(file: UploadFile = File(...)):
+    """Upload dan simpan satu file PDF dengan perlindungan memori (Max 25MB)."""
+    
+    # Validasi 1: Format File
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Hanya file PDF yang diperbolehkan.")
+        
+    # Validasi 2: Ukuran File (Baca per 1MB agar RAM server Render tidak jebol)
+    file_size = 0
+    while chunk := await file.read(1024 * 1024): 
+        file_size += len(chunk)
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413, 
+                detail=f"File terlalu besar! Maksimal ukuran file adalah {MAX_FILE_SIZE_MB} MB."
+            )
+            
+    # Kembalikan pointer pembacaan ke awal file
+    await file.seek(0)
+    
+    # --- LOGIKA PENYIMPANAN YANG AKTIF ---
+    report_id = f"rep_{uuid.uuid4().hex[:8]}"
     file_path = UPLOAD_DIR / f"{report_id}.pdf"
-
+    
     with open(file_path, "wb") as f:
-        f.write(contents)
+        f.write(await file.read())
 
-    # Store report metadata
+    # Simpan status ke memory store
     reports_store[report_id] = {
         "id": report_id,
         "file_name": file.filename,
         "file_path": str(file_path),
-        "file_size": len(contents),
         "company_name": None,
         "report_year": None,
         "status": "uploaded",
-        "page_count": None,
-        "analysis_id": None,
-        "error": None,
+        "page_count": 0,
         "created_at": datetime.utcnow().isoformat()
     }
-
+    
     return UploadResponse(
         report_id=report_id,
         file_name=file.filename,
-        status="uploaded",
-        message="PDF uploaded successfully. Send POST /analyze to start analysis."
+        status="success",
+        message="File valid dan berhasil diunggah."
     )
 
 # --- ANALYZE (single file) ---
