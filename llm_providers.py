@@ -20,7 +20,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-
+LLM_CONCURRENCY = asyncio.Semaphore(3)
 @dataclass
 class LLMResponse:
     """Standard response from any LLM provider."""
