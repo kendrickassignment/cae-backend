@@ -20,7 +20,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-LLM_CONCURRENCY = asyncio.Semaphore(3)
+LLM_CONCURRENCY = asyncio.Semaphore(5)
+
+
 @dataclass
 class LLMResponse:
     """Standard response from any LLM provider."""
@@ -83,6 +85,8 @@ async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.
             raise
     
     raise last_exception
+
+
 # ============================================================================
 # PROVIDER 1: GOOGLE GEMINI (HYBRID 3.0 FLASH & 3.1 PRO)
 # ============================================================================
@@ -124,10 +128,11 @@ class GeminiProvider(BaseLLMProvider):
         url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
 
         async def _make_request():
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                return response.json()
+            async with LLM_CONCURRENCY:
+                async with httpx.AsyncClient(timeout=180.0) as client:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    return response.json()
 
         data = await retry_with_backoff(_make_request)
 
@@ -152,6 +157,7 @@ class GeminiProvider(BaseLLMProvider):
                 
         except (KeyError, IndexError) as e:
             raise ValueError(f"Gemini response parse error: {e}. Response: {json.dumps(data)[:500]}")
+
         usage = data.get("usageMetadata", {})
 
         return LLMResponse(
@@ -204,14 +210,15 @@ class GroqProvider(BaseLLMProvider):
         }
 
         async def _make_request():
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
+            async with LLM_CONCURRENCY:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    return response.json()
 
         data = await retry_with_backoff(_make_request)
 
@@ -268,14 +275,15 @@ class MistralProvider(BaseLLMProvider):
         }
 
         async def _make_request():
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
+            async with LLM_CONCURRENCY:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    return response.json()
 
         data = await retry_with_backoff(_make_request)
 
@@ -332,14 +340,15 @@ class OpenAIProvider(BaseLLMProvider):
         }
 
         async def _make_request():
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
+            async with LLM_CONCURRENCY:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    return response.json()
 
         data = await retry_with_backoff(_make_request)
 
