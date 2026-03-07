@@ -5,7 +5,7 @@ Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 Main application file. Provides REST API endpoints for:
  - PDF upload and parsing
  - AI-powered greenwashing analysis
- - Hybrid Gemini routing (3.0 Flash → 3.1 Pro escalation)
+ - Hybrid Gemini routing (3 Flash → 3.1 Pro escalation)
  - Multi-file merge analysis (/analyze-multi)
  - Results retrieval
  - Health checks and provider testing
@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
     print(" CORPORATE ACCOUNTABILITY ENGINE (CAE)")
     print(" Built for Sinergia Animal International / AFFA")
     print(" 9 Evasion Patterns + AI Confidence Check")
-    print(" Hybrid Gemini: 3.0 Flash → 3.1 Pro Escalation")
+    print(" Hybrid Gemini: 3 Flash Preview → 3.1 Pro Preview Escalation")
     print(" Strict Scoring Algorithm v2.1")
     print("=" * 60)
     print(f" LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
@@ -82,7 +82,7 @@ app = FastAPI(
         "Adversarial AI auditor for corporate sustainability reports. "
         "Detects greenwashing in cage-free egg commitments with focus on Indonesia. "
         "9 evasion patterns + AI document confidence check. "
-        "Hybrid Gemini routing: 3.0 Flash → 3.1 Pro escalation. "
+        "Hybrid Gemini routing: 3 Flash → 3.1 Pro escalation. "
         "Built for Sinergia Animal International / AFFA."
     ),
     version="2.2.0",
@@ -579,10 +579,10 @@ async def run_analysis(
 
             if effective_provider == "gemini":
                 # --- TAHAP 1: FAST SCAN DENGAN GEMINI 3.0 FLASH ---
-                print(f"⚡ [TAHAP 1] Memulai Fast Scan dengan Gemini 3.0 Flash...")
+                print(f"⚡ [TAHAP 1] Memulai Fast Scan dengan Gemini 3 Flash Preview...")
                 from llm_providers import GeminiProvider
             
-                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash")
+                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
                 flash_response = await flash_provider.analyze(messages)
                 result_data = parse_llm_json(flash_response.content)
             
@@ -602,13 +602,13 @@ async def run_analysis(
                     routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
 
                 if needs_pro:
-                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
+                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro Preview...")
                     try:
-                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
                         pro_response = await pro_provider.analyze(messages)
                     
                         result_data = parse_llm_json(pro_response.content)
-                        final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                        final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
                         final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
                         final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
                 
@@ -620,12 +620,12 @@ async def run_analysis(
                         catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
                         result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
                     
-                        final_model = "gemini-3-flash (Pro Fallback)"
+                        final_model = "gemini-3-flash-preview (Pro Fallback)"
                         final_input_tokens = flash_response.input_tokens
                         final_output_tokens = flash_response.output_tokens
                 else:
                     print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                    final_model = "gemini-3-flash"
+                    final_model = "gemini-3-flash-preview"
                     final_input_tokens = flash_response.input_tokens
                     final_output_tokens = flash_response.output_tokens
             
@@ -798,10 +798,10 @@ async def run_multi_analysis(
             final_cost = 0.0
 
             if effective_provider == "gemini":
-                print(f"  ⚡ [TAHAP 1] Fast Scan merged docs dengan Gemini 3.0 Flash...")
+                print(f"  ⚡ [TAHAP 1] Fast Scan merged docs dengan Gemini 3 Flash Preview...")
                 from llm_providers import GeminiProvider
 
-                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash")
+                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
                 flash_response = await flash_provider.analyze(messages)
                 result_data = parse_llm_json(flash_response.content)
 
@@ -820,13 +820,13 @@ async def run_multi_analysis(
                     routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
 
                 if needs_pro:
-                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro...")
+                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro Preview...")
                     try:
-                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro")
+                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
                         pro_response = await pro_provider.analyze(messages)
 
                         result_data = parse_llm_json(pro_response.content)
-                        final_model = "gemini-3.1-pro (Hybrid Escalate)"
+                        final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
                         final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
                         final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
 
@@ -838,12 +838,12 @@ async def run_multi_analysis(
                         catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
                         result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
 
-                        final_model = "gemini-3-flash (Pro Fallback)"
+                        final_model = "gemini-3-flash-preview (Pro Fallback)"
                         final_input_tokens = flash_response.input_tokens
                         final_output_tokens = flash_response.output_tokens
                 else:
                     print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                    final_model = "gemini-3-flash"
+                    final_model = "gemini-3-flash-preview"
                     final_input_tokens = flash_response.input_tokens
                     final_output_tokens = flash_response.output_tokens
 
@@ -936,7 +936,7 @@ async def root(request: Request):
         "features": [
             "9 evasion patterns",
             "AI confidence check",
-            "Hybrid Gemini: 3.0 Flash → 3.1 Pro escalation",
+            "Hybrid Gemini: 3 Flash → 3.1 Pro escalation",
             "Multi-file merge analysis",
         ],
         "docs": "/docs",
@@ -1022,7 +1022,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     """
     Trigger AI analysis on an uploaded report.
-    Uses hybrid Gemini routing: 3.0 Flash → 3.1 Pro escalation.
+    Uses hybrid Gemini routing: 3 Flash → 3.1 Pro escalation.
 
     The analysis runs in the background. Poll GET /reports/{report_id}
     to check status, then GET /analysis/{analysis_id} for results.
@@ -1249,10 +1249,10 @@ async def list_providers():
             "gemini": {
                 "name": "Google Gemini (Hybrid)",
                 "models": {
-                    "fast": "gemini-3-flash",
-                    "pro": "gemini-3.1-pro"
+                    "fast": "gemini-3-flash-preview",
+                    "pro": "gemini-3.1-pro-preview"
                 },
-                "routing": "Auto-escalates to 3.1 Pro for high-risk reports",
+                "routing": "Auto-escalates to 3.1 Pro Preview for high-risk reports",
                 "free": True,
                 "context_window": "1M tokens",
                 "best_for": "Large documents (200+ pages), single-pass analysis",
