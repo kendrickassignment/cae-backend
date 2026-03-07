@@ -3,14 +3,14 @@ Corporate Accountability Engine (CAE) — LLM Provider Abstraction
 Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 Supports multiple FREE LLM providers, with Hybrid Routing for Gemini:
-  1. Google Gemini (Hybrid: gemini-3.0-flash for fast scan, gemini-3.1-pro for deep analysis)
+  1. Google Gemini (Hybrid: gemini-3-flash-preview for fast scan, gemini-3.1-pro-preview for deep analysis)
   2. Groq (Free tier — Llama 3, 30 RPM)
   3. Mistral (Free tier — mistral-small)
   4. OpenAI (Paid — GPT-4o, if grant money comes through)
 
 All providers use the same interface so you can swap with a single env var.
 
-Updated: March 2026 — Upgraded to Gemini 3.0 Flash & Gemini 3.1 Pro (Hybrid Routing setup)
+Updated: March 2026 — Upgraded to Gemini 3 Flash Preview & Gemini 3.1 Pro Preview (Hybrid Routing setup)
 """
 
 import os
@@ -94,16 +94,16 @@ async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 15.
 class GeminiProvider(BaseLLMProvider):
     """
     Google Gemini API 
-    Mendukung Gemini 3.0 Flash (Kecepatan) dan Gemini 3.1 Pro (Penalaran Mendalam).
+    Mendukung Gemini 3 Flash Preview (Kecepatan) dan Gemini 3.1 Pro Preview (Penalaran Mendalam).
     """
-    # Default model diperbarui ke gemini-3.0-flash
-    def __init__(self, api_key: str = None, model_name: str = "gemini-3-flash"):
+    # Default model diperbarui ke gemini-3-flash-preview
+    def __init__(self, api_key: str = None, model_name: str = "gemini-3-flash-preview"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required. Get free at https://aistudio.google.com/apikey")
         
         self.model = model_name
-        self.base_url = "https://generativelanguage.googleapis.com/v1"
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
         system_text = ""
@@ -427,8 +427,8 @@ PROVIDER_GUIDE = """
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  🥇 GEMINI (Recommended )                                   ║
-║     Stage 1: gemini-3.0-flash (fast scan)                    ║
-║     Stage 2: gemini-3.1-pro (escalation for high risk)       ║                       
+║     Stage 1: gemini-3-flash-preview (fast scan)              ║
+║     Stage 2: gemini-3.1-pro-preview (escalation for high risk)║                       
 ║     Context: 1M tokens (handles full 300-page PDFs!)         ║
 ║     Free: 15 req/min, 1M tokens/min                          ║
 ║     Best for: Large documents, single-pass analysis          ║
