@@ -97,13 +97,13 @@ class GeminiProvider(BaseLLMProvider):
     Mendukung Gemini 3.0 Flash (Kecepatan) dan Gemini 3.1 Pro (Penalaran Mendalam).
     """
     # Default model diperbarui ke gemini-3.0-flash
-    def __init__(self, api_key: str = None, model_name: str = "gemini-3-flash-preview"):
+    def __init__(self, api_key: str = None, model_name: str = "gemini-3-flash"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required. Get free at https://aistudio.google.com/apikey")
         
         self.model = model_name
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        self.base_url = "https://generativelanguage.googleapis.com/v1"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
         system_text = ""
