@@ -179,20 +179,36 @@ class ProviderTestRequest(BaseModel):
 
 import re
 
+def _unwrap_list(parsed) -> dict:
+    """
+    If the LLM returned a JSON array like [{...}] instead of {...},
+    unwrap it to the first dict element. Common with Gemini preview models.
+    """
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                return item
+        raise ValueError(f"JSON array contained no dict objects. Got: {str(parsed)[:200]}")
+    if isinstance(parsed, dict):
+        return parsed
+    raise ValueError(f"Expected dict or list, got {type(parsed).__name__}: {str(parsed)[:200]}")
+
+
 def parse_llm_json(raw_content: str) -> dict:
     """
     Parse JSON from LLM output, handling common issues:
     1. Clean JSON (best case)
-    2. JSON wrapped in markdown code blocks (```json ... ```)
-    3. JSON with leading/trailing text
-    4. JSON with trailing commas
-    5. JSON with comments
+    2. JSON array unwrapping ([{...}] → {...})
+    3. JSON wrapped in markdown code blocks (```json ... ```)
+    4. JSON with leading/trailing text
+    5. JSON with trailing commas
+    6. JSON with comments
     """
     content = raw_content.strip()
     
     # Attempt 1: Direct parse (best case — Gemini responseMimeType: json)
     try:
-        return json.loads(content)
+        return _unwrap_list(json.loads(content))
     except json.JSONDecodeError:
         pass
     
@@ -201,7 +217,7 @@ def parse_llm_json(raw_content: str) -> dict:
     code_match = re.search(code_block_pattern, content, re.DOTALL)
     if code_match:
         try:
-            return json.loads(code_match.group(1).strip())
+            return _unwrap_list(json.loads(code_match.group(1).strip()))
         except json.JSONDecodeError:
             pass
     
@@ -224,12 +240,12 @@ def parse_llm_json(raw_content: str) -> dict:
     if json_start >= 0 and json_end > json_start:
         json_str = content[json_start:json_end]
         try:
-            return json.loads(json_str)
+            return _unwrap_list(json.loads(json_str))
         except json.JSONDecodeError:
             # Attempt 4: Fix trailing commas (common LLM mistake)
             fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
             try:
-                return json.loads(fixed)
+                return _unwrap_list(json.loads(fixed))
             except json.JSONDecodeError:
                 pass
     
