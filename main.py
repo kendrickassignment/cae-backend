@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from pdf_parser import parse_pdf, chunk_document, ParsedDocument
 from system_prompt import build_analysis_prompt
-from llm_providers import get_provider, LLMResponse, PROVIDERS
+from llm_providers import get_provider, LLMResponse, PROVIDERS, LLM_CONCURRENCY
 
 # ============================================================================
 # CONFIG
@@ -517,15 +517,19 @@ async def run_analysis(
     """
     Background task: parse PDF → build prompt → call LLM → store results.
     """
-    analysis_id = str(uuid.uuid4())
+    # Bungkus seluruh logika di dalam Semaphore agar antrean terjaga
+    async with LLM_CONCURRENCY:
+        analysis_id = str(uuid.uuid4())
 
-    try:
-        # Step 1: Update status to processing
-        reports_store[report_id]["status"] = "processing"
+        try:
+            # Step 1: Update status to processing
+            reports_store[report_id]["status"] = "processing"
 
-        # Step 2: Parse the PDF
-        temp_path = file_path + ".processing.pdf"
-        shutil.copy2(file_path, temp_path)
+            # Step 2: Parse the PDF
+            # (Pastikan semua baris ini ada di dalam blok 'async with')
+            temp_path = file_path + ".processing.pdf"
+            shutil.copy2(file_path, temp_path)
+           
 
         try:
             parsed_doc = parse_pdf(temp_path)
@@ -690,9 +694,6 @@ async def run_analysis(
 
 
 # ============================================================================
-# BACKGROUND MULTI-FILE ANALYSIS TASK
-# ============================================================================
-
 async def run_multi_analysis(
     primary_report_id: str,
     report_ids: list[str],
@@ -703,13 +704,88 @@ async def run_multi_analysis(
 ):
     """
     Background task: parse MULTIPLE PDFs → merge text → hybrid analysis → ONE result.
-    Used by /analyze-multi endpoint.
     """
-    analysis_id = str(uuid.uuid4())
+    # 1. Masuk ke antrean (Semaphore)
+    async with LLM_CONCURRENCY:
+        analysis_id = str(uuid.uuid4())
 
-    try:
-        # Update primary report status
-        reports_store[primary_report_id]["status"] = "processing"
+        try:
+            # 2. Update status awal
+            reports_store[primary_report_id]["status"] = "processing"
+
+            all_texts = []
+            total_pages = 0
+            file_names = []
+
+            # Loop parse PDF
+            for rid in report_ids:
+                report = reports_store[rid]
+                file_path = report["file_path"]
+                temp_path = file_path + ".processing.pdf"
+                shutil.copy2(file_path, temp_path)
+
+                try:
+                    parsed_doc = parse_pdf(temp_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+
+                page_offset = total_pages
+                total_pages += parsed_doc.page_count
+                file_names.append(parsed_doc.file_name)
+
+                doc_header = (
+                    f"\n\n{'=' * 60}\n"
+                    f"=== [DOCUMENT {len(all_texts) + 1}: {parsed_doc.file_name} "
+                    f"(pages {page_offset + 1}-{page_offset + parsed_doc.page_count})] ===\n"
+                    f"{'=' * 60}\n\n"
+                )
+                all_texts.append(doc_header + parsed_doc.full_text_with_markers)
+                reports_store[rid]["status"] = "analyzing"
+
+            # 3. Gabungkan Teks & Kirim ke AI
+            merged_text = "\n".join(all_texts)
+            messages = build_analysis_prompt(
+                document_text=merged_text,
+                file_name=f"Merged_{len(report_ids)}_files",
+                page_count=total_pages
+            )
+
+            # Logika Hybrid Gemini (Flash dulu, kalau skor tinggi ke Pro)
+            from llm_providers import GeminiProvider
+            flash_p = GeminiProvider(api_key=api_key, model_name="gemini-3.0-flash")
+            flash_res = await flash_p.analyze(messages)
+            result_data = parse_llm_json(flash_res.content)
+            
+            # (Tambahkan logika eskalasi ke Pro di sini jika perlu, sama seperti run_analysis)
+
+            # 4. Validasi & Simpan Hasil
+            from main import validate_analysis_result # Pastikan fungsi ini terimpor
+            validated = validate_analysis_result(result_data, company_name)
+            
+            analysis_result = {
+                "id": analysis_id,
+                "report_id": primary_report_id,
+                "llm_model": "gemini-3.0-flash", # Sesuaikan jika eskalasi
+                "analyzed_at": datetime.utcnow().isoformat(),
+                **validated
+            }
+            analysis_store[analysis_id] = analysis_result
+
+            # Update semua status report yang terlibat
+            for rid in report_ids:
+                reports_store[rid]["status"] = "completed"
+                reports_store[rid]["analysis_id"] = analysis_id
+
+        except Exception as e:
+            # POSISI EXCEPT: Sejajar dengan TRY di atasnya
+            import traceback
+            print(f"❌ Multi-analysis failed: {str(e)}")
+            print(traceback.format_exc())
+            for rid in report_ids:
+                if rid in reports_store:
+                    reports_store[rid]["status"] = "failed"
+                    reports_store[rid]["error"] = str(e)
 
         # Parse all PDFs and collect text
         all_texts = []
