@@ -9,7 +9,7 @@ Supports multiple LLM providers, with Hybrid Routing for Gemini:
 
 All providers use the same interface so you can swap with a single env var.
 
-Updated: March 2026 — Providers: Gemini (primary), Qwen 3.5-235B-A22B (backup), OpenAI (grant-funded)
+Updated: March 2026 — Providers: Gemini (primary), Qwen 3.5-397B-A17B (backup), OpenAI (grant-funded)
 """
 
 import os
@@ -177,8 +177,8 @@ class GeminiProvider(BaseLLMProvider):
 class QwenProvider(BaseLLMProvider):
     """
     Qwen API via Alibaba DashScope International — OpenAI-compatible endpoint.
-    - Model: qwen3.5-235b-a22b
-    - Context: 131k tokens
+    - Model: qwen3.5-397b-a17b
+    - Context: 256k tokens
     - Supports thinking/reasoning mode (enable_thinking)
     - Best backup for large documents when Gemini is rate-limited.
 
@@ -194,7 +194,7 @@ class QwenProvider(BaseLLMProvider):
                 "Qwen is listed as a backup provider but DashScope International is not yet available. "
                 "Set the DASHSCOPE_API_KEY env var when it launches: https://dashscope.console.aliyun.com/"
             )
-        self.model = "qwen3.5-235b-a22b"
+        self.model = "qwen3.5-397b-a17b"
         self.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
@@ -374,14 +374,14 @@ PROVIDER_GUIDE = """
 ║     Key: https://aistudio.google.com/apikey                  ║
 ║                                                              ║
 ║  🥈 QWEN (Backup)                                           ║
-║     Model: qwen3.5-235b-a22b                                 ║
-║     Context: 131k tokens                                     ║
+║     Model: qwen3.5-397b-a17b                                 ║
+║     Context: 256k tokens                                     ║
 ║     API: DashScope International (OpenAI-compatible)         ║
 ║     Best for: Backup when Gemini is rate-limited             ║
 ║     Key: https://dashscope.console.aliyun.com/               ║
 ║                                                              ║
-║  💰 OPENAI (in the future)                                  ║
-║     Model: gpt-5                                            ║
+║  💰 OPENAI (If grant funded)                                ║
+║     Model: gpt-4o                                            ║
 ║     Context: 128k tokens                                     ║
 ║     Cost: ~$0.15-$0.30 per 200-page report                  ║
 ║     Best for: Highest quality, if budget allows              ║
