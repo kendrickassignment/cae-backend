@@ -5,7 +5,7 @@ Built for **Sinergia Animal International / Act For Farmed Animals (AFFA).**
 
 Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 
-> Frontend: [cae-animals.com](https://cae-animals.com)
+> Frontend: [cae-animals.com](https://cae-animals.com) | Backend: [cae-backend-340454867661.asia-southeast3.run.app](https://cae-backend-340454867661.asia-southeast3.run.app)
 
 ---
 
@@ -13,10 +13,9 @@ Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 
 | Component | Service | Cost | Notes |
 | --- | --- | --- | --- |
-| **AI (Default)** | Google Gemini API (3.0 Flash & 3.1 Pro) | Paid ($300 Balance) | **Hybrid Routing enabled.** 25 req/min, 1M token context |
-| **AI (Backup)** | Groq API | Free | 30 req/min, 131K context |
-| **AI (Backup 2)** | Mistral API | Free | 32K context |
-| **Hosting** | Render.com | Free | Free tier |
+| **AI (Primary)** | Google Gemini API (3.0 Flash & 3.1 Pro) | Paid ($300 Balance) | **Hybrid Routing enabled.** 25 req/min, 1M token context |
+| **AI (Backup)** | Qwen 3.5-235B-A22B (DashScope) | Paid per usage | 1M token context |
+| **Hosting** | Google Cloud Run (asia-southeast3 / Jakarta) | Free tier | Scale-to-zero, 300s timeout |
 | **PDF Parsing** | PyMuPDF | Free | Open-source |
 | **Frontend** | Lovable | $25/month | React hosting + deployment |
 | **Database** | Supabase | Free | PostgreSQL + Auth + Storage + Realtime |
@@ -34,7 +33,6 @@ Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 git clone https://github.com/kendrickassignment/cae-backend.git
 cd cae-backend
 pip install -r requirements.txt
-
 ```
 
 ### 2. Get your API key
@@ -46,14 +44,12 @@ Go to [Google AI Studio](https://aistudio.google.com/apikey) and create a Gemini
 ```bash
 cp .env.example .env
 # Edit .env — see Environment Variables section below
-
 ```
 
 ### 4. Run the server
 
 ```bash
 python main.py
-
 ```
 
 * Server starts at `http://localhost:8000`
@@ -76,7 +72,6 @@ curl http://localhost:8000/reports/YOUR_REPORT_ID
 
 # Get results (use analysis_id from status response)
 curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
-
 ```
 
 ---
@@ -87,8 +82,9 @@ curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
 | --- | --- | --- |
 | `GET` | `/` | API info and health check |
 | `GET` | `/health` | Simple health check |
-| `POST` | `/upload` | Upload a PDF report (max 50MB) |
+| `POST` | `/upload` | Upload a PDF report (max 25MB) |
 | `POST` | `/analyze` | Trigger AI analysis on uploaded report |
+| `POST` | `/analyze-multi` | Trigger merged analysis on multiple uploaded reports |
 | `GET` | `/reports` | List all reports |
 | `GET` | `/reports/{id}` | Get report status |
 | `GET` | `/analysis/{id}` | Get full analysis results |
@@ -104,15 +100,12 @@ curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
 2. **Duplicate Check:** SHA-256 file hash compared against existing analyses. Company + year combination also checked. User can proceed or view existing.
 3. **Parse:** PyMuPDF extracts all text with page numbers. Footnotes, tables, and appendices are specially tagged.
 4. **Prompt:** The adversarial system prompt tells the AI to act as a strict compliance officer hunting for **9 greenwashing evasion patterns**.
-5. **Hybrid AI Analysis (The Engine):** - **Stage 1 (Fast Scan):** The system uses `gemini-3.0-flash` to rapidly scan the document and extract initial findings.
-* **Stage 2 (Pro Escalation):** If the initial scan detects severe greenwashing (Score >= 56) OR "Strategic Silence" (Indonesia is omitted), the system automatically routes the query to `gemini-3.1-pro` for deep adversarial reasoning and evidence extraction.
-
-
+5. **Hybrid AI Analysis (The Engine):**
+   - **Stage 1 (Fast Scan):** The system uses `gemini-3.0-flash` to rapidly scan the document and extract initial findings.
+   - **Stage 2 (Pro Escalation):** If the initial scan detects severe greenwashing (Score >= 56) OR "Strategic Silence" (Indonesia is omitted), the system automatically routes the query to `gemini-3.1-pro` for deep adversarial reasoning and evidence extraction.
 6. **Deduplicate:** Two-layer system removes noisy/duplicate findings:
-* **AI Prompt Layer** — instructs LLM to group related findings (max 3-5 per pattern, target 7-15 total)
-* **Python Safety Net** — `deduplicate_findings()` merges identical findings server-side, collecting all page references into one grouped finding
-
-
+   - **AI Prompt Layer** — instructs LLM to group related findings (max 3-5 per pattern, target 7-15 total)
+   - **Python Safety Net** — `deduplicate_findings()` merges identical findings server-side, collecting all page references into one grouped finding
 7. **Score:** Deterministic, tamper-proof scoring — AI suggests a score, Python enforces `score_to_level()` mapping. AI cannot override the risk level.
 8. **Store:** Results saved to Supabase PostgreSQL with Row Level Security. Admin notifications triggered via edge functions.
 
@@ -139,7 +132,6 @@ def score_to_level(score: int) -> str:
     if score >= 56: return "high"
     if score >= 31: return "medium"
     return "low"
-
 ```
 
 | Factor | Points | Condition |
@@ -158,16 +150,47 @@ def score_to_level(score: int) -> str:
 
 ---
 
-## ☁️ Deploy to Render (Free)
+## ☁️ Deploy to Google Cloud Run
 
-1. Push this code to a **GitHub repo**.
-2. Go to [Render.com](https://render.com) and connect your GitHub.
-3. Create a **New Web Service** → select your repo.
-4. Render auto-detects the `render.yaml` config.
-5. Add your environment variables in the Render dashboard → Environment tab (see below).
-6. Deploy! Your API will be live at `https://cae-backend.onrender.com`.
+CAE backend is deployed on **Google Cloud Run** in the `asia-southeast3` (Jakarta) region.
 
-> **Note:** Set this URL in your Lovable frontend's Settings page as the "Backend API URL." Frontend is at [cae-animals.com](https://cae-animals.com).
+### Quick Deploy
+
+```bash
+gcloud run deploy cae-backend \
+  --source . \
+  --region asia-southeast3 \
+  --allow-unauthenticated \
+  --memory 1Gi \
+  --cpu 1 \
+  --timeout 300 \
+  --max-instances 3 \
+  --set-env-vars LLM_PROVIDER=gemini \
+  --set-secrets GEMINI_API_KEY=gemini-api-key:latest
+```
+
+### Deploy with Service YAML
+
+```bash
+# Build and push image first
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/cae-backend
+
+# Deploy using config
+gcloud run services replace cloudrun-service.yaml --region asia-southeast3
+```
+
+### Key Cloud Run Settings
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| **Region** | `asia-southeast3` (Jakarta) | Closest to Indonesia — low latency |
+| **Memory** | 1 Gi | PyMuPDF + large PDF parsing |
+| **Timeout** | 300s (5 min) | Gemini Pro deep analysis can take 2-4 min |
+| **Max instances** | 3 | Cost control |
+| **Min instances** | 0 | Scale-to-zero when idle |
+| **Concurrency** | 10 | Requests per container |
+
+> **Note:** Set the backend URL (`https://cae-backend-340454867661.asia-southeast3.run.app`) in your Lovable frontend's Settings page as the "Backend API URL." Frontend is at [cae-animals.com](https://cae-animals.com).
 
 ---
 
@@ -176,14 +199,13 @@ def score_to_level(score: int) -> str:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | ✅ | Google AI Studio API key (Paid tier account required for Pro model) |
-| `GROQ_API_KEY` | Optional | Groq API key (backup provider) |
-| `MISTRAL_API_KEY` | Optional | Mistral API key (backup provider) |
+| `DASHSCOPE_API_KEY` | Optional | Qwen API key (backup — pending DashScope International launch) |
 | `OPENAI_API_KEY` | Optional | OpenAI API key (premium provider, ~$25/month) |
-| `LLM_PROVIDER` | Optional | Default provider: `gemini`, `groq`, `mistral`, or `openai` (default: `gemini`) |
+| `LLM_PROVIDER` | Optional | Default provider: `gemini`, `qwen`, or `openai` (default: `gemini`) |
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service role key (for storing results + notifications) |
 | `FRONTEND_URL` | ✅ | Frontend URL for CORS (e.g., `https://cae-animals.com`) |
-| `PORT` | Optional | Server port (default: `8000`) |
+| `PORT` | Optional | Server port (default: `8000`, Cloud Run uses `8080`) |
 
 ---
 
@@ -195,15 +217,11 @@ Set the `LLM_PROVIDER` environment variable:
 # Use Gemini (default — best for large docs, 1M token context, hybrid routing)
 LLM_PROVIDER=gemini
 
-# Use Groq (fastest inference, 131K context)
-LLM_PROVIDER=groq
-
-# Use Mistral (backup, 32K context)
-LLM_PROVIDER=mistral
+# Use Qwen (backup — requires DASHSCOPE_API_KEY, pending international availability)
+LLM_PROVIDER=qwen
 
 # Use OpenAI (highest quality, ~$25/month)
 LLM_PROVIDER=openai
-
 ```
 
 Or override per-request in the `/analyze` endpoint:
@@ -211,20 +229,18 @@ Or override per-request in the `/analyze` endpoint:
 ```json
 {
   "report_id": "xxx",
-  "provider": "groq",
-  "api_key": "your-groq-key"
+  "provider": "qwen",
+  "api_key": "your-dashscope-key"
 }
-
 ```
 
 ### AI Provider Comparison
 
-| Provider | Model | Context Window | Cost | Best For |
-| --- | --- | --- | --- | --- |
-| **Google Gemini** | `gemini-3.0-flash` & `gemini-3.1-pro` | 1M tokens | Paid Tier ($300 Balance) | Large documents (200+ pages), deep adversarial analysis — **Recommended** |
-| **Groq** | `llama-3.3-70b-versatile` | 131K tokens | Free | Fast inference, medium documents |
-| **Mistral** | `mistral-small-latest` | 32K tokens | Free | Backup, multilingual analysis |
-| **OpenAI** | `gpt-4o` | 128K tokens | ~$25/month | Highest quality analysis |
+| Provider | Model | Context Window | Cost | Status | Best For |
+| --- | --- | --- | --- | --- | --- |
+| **Google Gemini** | `gemini-3.0-flash` & `gemini-3.1-pro` | 1M tokens | Paid Tier ($300 Balance) | ✅ Active | Large documents (200+ pages), deep adversarial analysis — **Primary** |
+| **Qwen** | `qwen3.5-235b-a22b` | 131K tokens | Pay-as-you-go | ⏳ Pending | Backup — DashScope International not yet available |
+| **OpenAI** | `gpt-4o` | 128K tokens | ~$25/month | ✅ Ready | Highest quality analysis (if grant funded) |
 
 ---
 
@@ -236,6 +252,7 @@ Or override per-request in the `/analyze` endpoint:
 * ✅ **SHA-256 file hashing** for duplicate PDF detection
 * ✅ **Input validation** on all endpoints
 * ✅ **No API keys stored server-side** — users provide their own keys per-request or via settings
+* ✅ **Cloud Run** — containerized, auto-scales, Google-managed infrastructure
 
 ---
 
@@ -243,25 +260,24 @@ Or override per-request in the `/analyze` endpoint:
 
 ```text
 cae-backend/
-├── main.py              # FastAPI app — all endpoints & hybrid routing logic
-├── pdf_parser.py        # Forensic PDF parser (PyMuPDF)
-├── llm_providers.py     # Multi-provider LLM abstraction
-├── system_prompt.py     # Adversarial AI prompt (the brain)
-├── requirements.txt     # Python dependencies
-├── .env.example         # Environment variable template
-├── Dockerfile           # Container for deployment
-├── render.yaml          # Render.com free deployment config
-├── README.md            # This file
-├── uploads/             # Uploaded PDFs (created at runtime)
-└── results/             # Analysis JSON results (created at runtime)
-
+├── main.py                 # FastAPI app — all endpoints & hybrid routing logic
+├── pdf_parser.py           # Forensic PDF parser (PyMuPDF)
+├── llm_providers.py        # Multi-provider LLM abstraction (Gemini, Qwen, OpenAI)
+├── system_prompt.py        # Adversarial AI prompt (the brain)
+├── requirements.txt        # Python dependencies
+├── .env.example            # Environment variable template
+├── Dockerfile              # Container for Cloud Run deployment
+├── cloudrun-service.yaml   # GCP Cloud Run service config
+├── README.md               # This file
+├── uploads/                # Uploaded PDFs (created at runtime)
+└── results/                # Analysis JSON results (created at runtime)
 ```
 
 ---
 
 ## 🛡️ Built by Kendrick with ❤️
 
-> Frontend: [cae-animals.com](https://cae-animals.com) | Backend: [cae-backend.onrender.com](https://cae-backend.onrender.com)
+> Frontend: [cae-animals.com](https://cae-animals.com) | Backend: [cae-backend-340454867661.asia-southeast3.run.app](https://cae-backend-340454867661.asia-southeast3.run.app)
 
 This tool empowers advocacy campaigns with instant, citation-backed evidence to hold multinational corporations accountable for their cage-free egg commitments in Indonesia.
 
