@@ -1,5 +1,5 @@
 # Corporate Accountability Engine (CAE) — Docker Container
-# Deploy free on: Render.com, Railway.app, Fly.io
+# Deploy on: Google Cloud Run (GCP)
 
 FROM python:3.12-slim
 
@@ -21,12 +21,10 @@ COPY . .
 # Create upload and results directories
 RUN mkdir -p uploads results
 
-# Expose port
+# Cloud Run uses PORT env var (default 8080)
+ENV PORT=8080
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8080/health')" || exit 1
-
 # Run the server
+# Cloud Run sends SIGTERM for graceful shutdown — uvicorn handles it natively
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
