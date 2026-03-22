@@ -14,7 +14,7 @@ Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
 | Component | Service | Cost | Notes |
 | --- | --- | --- | --- |
 | **AI (Primary)** | Google Gemini API (3.0 Flash & 3.1 Pro) | Paid ($300 Balance) | **Hybrid Routing enabled.** 25 req/min, 1M token context |
-| **AI (Backup)** | Qwen 3.5-235B-A22B (DashScope) | Paid per usage | 1M token context |
+| **AI (Backup)** | Qwen 3.5-397B-A17B (DashScope) | Paid per usage | 256K token context |
 | **Hosting** | Google Cloud Run (asia-southeast3 / Jakarta) | Free tier | Scale-to-zero, 300s timeout |
 | **PDF Parsing** | PyMuPDF | Free | Open-source |
 | **Frontend** | Lovable | $25/month | React hosting + deployment |
