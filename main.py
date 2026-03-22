@@ -562,7 +562,7 @@ async def run_analysis(
 
             context_limits = {
                 "gemini": 900_000,
-                "qwen": 120_000,
+                "qwen": 240_000,
                 "openai": 120_000,
             }
 
@@ -780,7 +780,7 @@ async def run_multi_analysis(
 
             context_limits = {
                 "gemini": 900_000,
-                "qwen": 120_000,
+                "qwen": 240_000,
                 "openai": 120_000,
             }
 
@@ -1273,13 +1273,11 @@ async def list_providers():
                 "get_key": "https://aistudio.google.com/apikey"
             },
             "qwen": {
-                "name": "Qwen 3.5-235B-A22B (DashScope)",
-                "model": "qwen3.5-235b-a22b",
+                "name": "Qwen 3.5-397B-A17B (DashScope)",
+                "model": "qwen3.5-397b-a17b",
                 "free": False,
-                "context_window": "131k tokens",
+                "context_window": "256k tokens",
                 "best_for": "Backup provider, large reasoning model",
-                "status": "pending — DashScope International not yet available",
-                "configured": bool(os.getenv("DASHSCOPE_API_KEY")),
                 "get_key": "https://dashscope.console.aliyun.com/"
             },
             "openai": {
