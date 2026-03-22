@@ -12,7 +12,7 @@ Main application file. Provides REST API endpoints for:
 
 Updated: Mar 2026 — Hybrid Gemini + Multi-file merge
 
-Deploy FREE on: Render.com, Railway.app, or Fly.io
+Deploy on: Google Cloud Run (GCP)
 
 Run locally: uvicorn main:app --reload --port 8000
 """
@@ -158,7 +158,7 @@ class AnalyzeRequest(BaseModel):
     report_id: str
     company_name: str | None = None
     report_year: int | None = None
-    provider: str | None = None # gemini, groq, mistral, openai
+    provider: str | None = None # gemini, qwen, openai
     api_key: str | None = None # Optional override
 
 class AnalyzeMultiRequest(BaseModel):
@@ -562,8 +562,7 @@ async def run_analysis(
 
             context_limits = {
                 "gemini": 900_000,
-                "groq": 120_000,
-                "mistral": 28_000,
+                "qwen": 120_000,
                 "openai": 120_000,
             }
 
@@ -648,7 +647,7 @@ async def run_analysis(
                 final_cost = 0.0 # Free/Kredit
 
             else:
-                # --- JIKA MENGGUNAKAN PROVIDER LAIN (Groq, Mistral, dll) ---
+                # --- JIKA MENGGUNAKAN PROVIDER LAIN (Qwen, OpenAI, dll) ---
                 provider = get_provider(provider_name=effective_provider, api_key=api_key)
                 llm_response = await provider.analyze(messages)
                 result_data = parse_llm_json(llm_response.content)
@@ -781,8 +780,7 @@ async def run_multi_analysis(
 
             context_limits = {
                 "gemini": 900_000,
-                "groq": 120_000,
-                "mistral": 28_000,
+                "qwen": 120_000,
                 "openai": 120_000,
             }
 
@@ -942,7 +940,7 @@ async def run_multi_analysis(
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root(request: Request):
-    """Health check and API info. Supports both GET and HEAD for Render health checks."""
+    """Health check and API info. Supports both GET and HEAD for Cloud Run health checks."""
     body = {
         "name": "Corporate Accountability Engine (CAE)",
         "version": "2.2.0",
@@ -993,7 +991,7 @@ async def upload_file(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Hanya file PDF yang diperbolehkan.")
         
-    # Validasi 2: Ukuran File (Baca per 1MB agar RAM server Render tidak jebol)
+    # Validasi 2: Ukuran File (Baca per 1MB agar RAM server tidak jebol)
     file_size = 0
     while chunk := await file.read(1024 * 1024): 
         file_size += len(chunk)
@@ -1274,21 +1272,15 @@ async def list_providers():
                 "best_for": "Large documents (200+ pages), single-pass analysis",
                 "get_key": "https://aistudio.google.com/apikey"
             },
-            "groq": {
-                "name": "Groq (Llama 3.3 70B)",
-                "model": "llama-3.3-70b-versatile",
-                "free": True,
+            "qwen": {
+                "name": "Qwen 3.5-235B-A22B (DashScope)",
+                "model": "qwen3.5-235b-a22b",
+                "free": False,
                 "context_window": "131k tokens",
-                "best_for": "Fast inference, medium documents",
-                "get_key": "https://console.groq.com/keys"
-            },
-            "mistral": {
-                "name": "Mistral",
-                "model": "mistral-small-latest",
-                "free": True,
-                "context_window": "32k tokens",
-                "best_for": "Backup provider, multilingual",
-                "get_key": "https://console.mistral.ai/api-keys"
+                "best_for": "Backup provider, large reasoning model",
+                "status": "pending — DashScope International not yet available",
+                "configured": bool(os.getenv("DASHSCOPE_API_KEY")),
+                "get_key": "https://dashscope.console.aliyun.com/"
             },
             "openai": {
                 "name": "OpenAI GPT-4o",
