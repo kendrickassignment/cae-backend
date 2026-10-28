@@ -20,20 +20,25 @@ Run locally: uvicorn main:app --reload --port 8000
 import os
 import json
 import uuid
-import shutil
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
 
-from pdf_parser import parse_pdf, chunk_document, ParsedDocument
+load_dotenv()
+
+from geography import COUNTRIES, catalog, normalize_countries
+from asia_analysis import normalize_asia_result, needs_regional_escalation
+
+from pdf_parser import parse_pdf
 from system_prompt import build_analysis_prompt
-from llm_providers import get_provider, LLMResponse, PROVIDERS, LLM_CONCURRENCY
+from llm_providers import get_provider, PROVIDERS
 
 # ============================================================================
 # CONFIG
@@ -67,7 +72,7 @@ async def lifespan(app: FastAPI):
     print(" Built for Sinergia Animal International / AFFA")
     print(" 9 Evasion Patterns + AI Confidence Check")
     print(" Hybrid Gemini: 3 Flash Preview → 3.1 Pro Preview Escalation")
-    print(" Strict Scoring Algorithm v2.1")
+    print(" Asia evidence scoring v1 + legacy Indonesia compatibility")
     print("=" * 60)
     print(f" LLM Provider: {os.getenv('LLM_PROVIDER', 'gemini')} (default)")
     print(f" Upload Dir: {UPLOAD_DIR.absolute()}")
@@ -80,12 +85,12 @@ app = FastAPI(
     title="Corporate Accountability Engine (CAE)",
     description=(
         "Adversarial AI auditor for corporate sustainability reports. "
-        "Detects greenwashing in cage-free egg commitments with focus on Indonesia. "
+        "Detects greenwashing in cage-free egg commitments across Asia, with country-specific evidence and legacy Indonesia fields. "
         "9 evasion patterns + AI document confidence check. "
         "Hybrid Gemini routing: 3 Flash → 3.1 Pro escalation. "
         "Built for Sinergia Animal International / AFFA."
     ),
-    version="2.2.0",
+    version="3.0.0",
     lifespan=lifespan
 )
 
@@ -154,14 +159,23 @@ class UploadResponse(BaseModel):
     status: str
     message: str
 
-class AnalyzeRequest(BaseModel):
+class RegionalOptions(BaseModel):
+    target_countries: list[str] = Field(default_factory=lambda: list(COUNTRIES), min_length=1, max_length=len(COUNTRIES))
+
+    @field_validator("target_countries")
+    @classmethod
+    def check_countries(cls, values):
+        return normalize_countries(values)
+
+
+class AnalyzeRequest(RegionalOptions):
     report_id: str
     company_name: str | None = None
     report_year: int | None = None
     provider: str | None = None # gemini, qwen, openai
     api_key: str | None = None # Optional override
 
-class AnalyzeMultiRequest(BaseModel):
+class AnalyzeMultiRequest(RegionalOptions):
     """Request to analyze multiple uploaded PDFs as one merged analysis."""
     report_ids: list[str] = Field(..., min_length=1, max_length=MAX_BATCH_FILES)
     company_name: str | None = None
@@ -249,19 +263,8 @@ def parse_llm_json(raw_content: str) -> dict:
             except json.JSONDecodeError:
                 pass
     
-    # Attempt 5: If all else fails, log what we got and raise
-    debug_path = RESULTS_DIR / f"debug_raw_response_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(debug_path, 'w') as f:
-        f.write(f"RAW LLM RESPONSE ({len(content)} chars):\n")
-        f.write(f"First 500 chars: {content[:500]}\n")
-        f.write(f"Last 500 chars: {content[-500:]}\n")
-        f.write(f"\nFULL CONTENT:\n{content}")
-    
-    raise ValueError(
-        f"LLM did not return valid JSON. Response length: {len(content)} chars. "
-        f"First 100 chars: {content[:100]}... "
-        f"Debug saved to {debug_path}"
-    )
+    # Do not persist raw model output or expose document contents in errors.
+    raise ValueError("LLM did not return valid JSON.")
 
 # ============================================================================
 # HARD VALIDATION — Python code that AI CANNOT override
@@ -291,95 +294,13 @@ def score_to_level(score: int) -> str:
 
 
 def deduplicate_findings(findings: list[dict]) -> list[dict]:
-    """
-    Merge findings with identical finding_type + similar titles.
-    Safety net — the AI prompt should already group them,
-    but if it doesn't, Python enforces it.
-    """
-    from collections import defaultdict
-
-    # Group by finding_type
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for f in findings:
-        groups[f["finding_type"]].append(f)
-
-    merged = []
-    for ftype, group_findings in groups.items():
-        if len(group_findings) <= 3:
-            # 3 or fewer findings of this type — keep all
-            merged.extend(group_findings)
-            continue
-
-        # Check if titles are identical/very similar
-        titles = [f["title"].lower().strip() for f in group_findings]
-        unique_titles = set(titles)
-
-        if len(unique_titles) <= 2:
-            # All findings have same/similar titles — MERGE into one
-            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-            sorted_findings = sorted(
-                group_findings,
-                key=lambda f: severity_order.get(f["severity"], 5)
-            )
-
-            main_finding = sorted_findings[0].copy()
-
-            # Collect all page numbers and quotes
-            all_pages = []
-            all_quotes = []
-            for f in group_findings:
-                if f.get("page_number") and f["page_number"] > 0:
-                    all_pages.append(f["page_number"])
-                if f.get("exact_quote") and f["exact_quote"] != "N/A":
-                    all_quotes.append(f["exact_quote"])
-
-            all_pages = sorted(set(all_pages))
-
-            # Build page reference string
-            page_list = ", ".join(f"p.{p}" for p in all_pages[:10])
-            if len(all_pages) > 10:
-                page_list += f" (+{len(all_pages) - 10} more)"
-
-            instance_count = len(group_findings)
-            main_finding["title"] = f"{main_finding['title']} ({instance_count} instances)"
-            main_finding["description"] = (
-                f"{main_finding.get('description', '')} "
-                f"[Detected {instance_count} instances across the report. "
-                f"Found on: {page_list}. "
-                f"Most significant occurrence on p.{all_pages[0] if all_pages else 'N/A'}.]"
-            ).strip()
-
-            # Keep up to 3 most distinct quotes
-            unique_quotes = list(dict.fromkeys(all_quotes))[:3]
-            if unique_quotes:
-                main_finding["exact_quote"] = " | ".join(unique_quotes)
-
-            merged.append(main_finding)
-
-            print(
-                f"\U0001f504 MERGED {instance_count} '{ftype}' findings into 1 "
-                f"(pages: {page_list})"
-            )
-        else:
-            # Different titles — keep up to 5 most severe
-            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-            sorted_findings = sorted(
-                group_findings,
-                key=lambda f: severity_order.get(f["severity"], 5)
-            )
-            kept = sorted_findings[:5]
-            merged.extend(kept)
-
-            if len(group_findings) > 5:
-                print(
-                    f"\u2702\ufe0f TRIMMED '{ftype}' findings from {len(group_findings)} to 5 "
-                    f"(kept highest severity)"
-                )
-
-    # Re-assign IDs
-    for i, f in enumerate(merged):
-        f["id"] = f"f-{i + 1}"
-
+    """Remove exact duplicate evidence only; never collapse countries or documents."""
+    seen, merged = set(), []
+    for finding in findings:
+        key = json.dumps({k: v for k, v in finding.items() if k != "id"}, sort_keys=True, ensure_ascii=False)
+        if key not in seen:
+            seen.add(key)
+            merged.append(dict(finding, id=f"f-{len(merged) + 1}"))
     return merged
 
 
@@ -522,416 +443,116 @@ def validate_analysis_result(result_data: dict, fallback_company: str | None = N
 # BACKGROUND ANALYSIS TASK
 # ============================================================================
 
-async def run_analysis(
-    report_id: str,
-    file_path: str,
-    company_name: str | None,
-    report_year: int | None,
-    provider_name: str | None,
-    api_key: str | None
-):
-    """
-    Background task: parse PDF → build prompt → call LLM → store results.
-    """
-    # Bungkus seluruh logika di dalam Semaphore agar antrean terjaga
-    async with LLM_CONCURRENCY:
+# Jobs and HTTP calls have DISTINCT limits: acquiring the same semaphore twice
+# deadlocks when five jobs all hold a slot before calling the provider.
+JOB_CONCURRENCY = asyncio.Semaphore(5)
+
+
+def _context_budget(provider):
+    return {"gemini": 900_000, "qwen": 220_000, "openai": 110_000}.get(provider, 110_000)
+
+
+async def _run_reports(report_ids, company_name, report_year, provider_name, api_key, target_countries):
+    async with JOB_CONCURRENCY:
         analysis_id = str(uuid.uuid4())
-
         try:
-            # Step 1: Update status to processing
-            reports_store[report_id]["status"] = "processing"
-
-            # Step 2: Parse the PDF
-            # (Pastikan semua baris ini ada di dalam blok 'async with')
-            temp_path = file_path + ".processing.pdf"
-            shutil.copy2(file_path, temp_path)
-
-            try:
-                parsed_doc = parse_pdf(temp_path)
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-
-            reports_store[report_id]["page_count"] = parsed_doc.page_count
-            reports_store[report_id]["status"] = "analyzing"
-
-            # Step 3: Prepare text for LLM
-            document_text = parsed_doc.full_text_with_markers
-            estimated_tokens = len(document_text) // 4
-            effective_provider = provider_name or os.getenv("LLM_PROVIDER", "gemini")
-
-            context_limits = {
-                "gemini": 900_000,
-                "qwen": 240_000,
-                "openai": 120_000,
-            }
-
-            max_tokens = context_limits.get(effective_provider, 120_000)
-
-            if estimated_tokens > max_tokens:
-                char_limit = max_tokens * 4
-                half = char_limit // 2
-                document_text = (
-                    document_text[:half]
-                    + "\n\n--- [DOCUMENT TRUNCATED FOR CONTEXT LIMIT — MIDDLE SECTIONS OMITTED] ---\n\n"
-                    + document_text[-half:]
-                )
-
-            # Step 4: Build the adversarial prompt
-            messages = build_analysis_prompt(
-                document_text=document_text,
-                file_name=parsed_doc.file_name,
-                page_count=parsed_doc.page_count
-            )
-
-            # ====================================================================
-            # STEP 5 & 6: CALL LLM & PARSE (HYBRID ROUTING FOR GEMINI)
-            # ====================================================================
-            final_model = ""
-            final_input_tokens = 0
-            final_output_tokens = 0
-            final_cost = 0.0
-
-            if effective_provider == "gemini":
-                # --- TAHAP 1: FAST SCAN DENGAN GEMINI 3.0 FLASH ---
-                print(f"⚡ [TAHAP 1] Memulai Fast Scan dengan Gemini 3 Flash Preview...")
-                from llm_providers import GeminiProvider
-            
-                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
-                flash_response = await flash_provider.analyze(messages)
-                result_data = parse_llm_json(flash_response.content)
-            
-                raw_score = int(result_data.get("overall_risk_score", 0))
-                indo_mentioned = result_data.get("indonesia_mentioned")
-                indo_status = str(result_data.get("indonesia_status", "")).lower()
-
-                # --- TAHAP 2: EVALUASI UNTUK ESCALATE KE PRO ---
-                needs_pro = False
-                routing_reason = ""
-
-                if raw_score >= 56:
-                    needs_pro = True
-                    routing_reason = f"Skor risiko tinggi ({raw_score} - High/Critical)"
-                elif indo_mentioned is False or indo_status == "silent":
-                    needs_pro = True
-                    routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
-
-                if needs_pro:
-                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro Preview...")
-                    try:
-                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
-                        pro_response = await pro_provider.analyze(messages)
-                    
-                        result_data = parse_llm_json(pro_response.content)
-                        final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
-                        final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
-                        final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
-                
-                    except Exception as pro_error:
-                        print(f"⚠️ [TAHAP 2 GAGAL] Gemini Pro bermasalah ({pro_error}). Menggunakan fallback hasil Flash.")
-                    
-                        # Kembalikan ke hasil Flash (Tahap 1)
-                        result_data = parse_llm_json(flash_response.content)
-                        catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
-                        result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
-                    
-                        final_model = "gemini-3-flash-preview (Pro Fallback)"
-                        final_input_tokens = flash_response.input_tokens
-                        final_output_tokens = flash_response.output_tokens
-                else:
-                    print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                    final_model = "gemini-3-flash-preview"
-                    final_input_tokens = flash_response.input_tokens
-                    final_output_tokens = flash_response.output_tokens
-            
-                final_cost = 0.0 # Free/Kredit
-
-            else:
-                # --- JIKA MENGGUNAKAN PROVIDER LAIN (Qwen, OpenAI, dll) ---
-                provider = get_provider(provider_name=effective_provider, api_key=api_key)
-                llm_response = await provider.analyze(messages)
-                result_data = parse_llm_json(llm_response.content)
-            
-                final_model = llm_response.model
-                final_input_tokens = llm_response.input_tokens
-                final_output_tokens = llm_response.output_tokens
-                final_cost = llm_response.cost_estimate_usd
-
-
-            # Step 6.5: HARD VALIDATION — Python code enforces rules AI cannot override
-            validated = validate_analysis_result(result_data, company_name)
-
-            # Step 7: Store the VALIDATED analysis result
-            analysis_result = {
-                "id": analysis_id,
-                "report_id": report_id,
-                "company_name": validated["company_name"],
-                "report_year": validated["report_year"] or report_year,
-                "overall_risk_level": validated["overall_risk_level"],
-                "overall_risk_score": validated["overall_risk_score"],
-                "global_claim": validated["global_claim"],
-                "indonesia_mentioned": validated["indonesia_mentioned"],
-                "indonesia_status": validated["indonesia_status"],
-                "sea_countries_mentioned": validated["sea_countries_mentioned"],
-                "sea_countries_excluded": validated["sea_countries_excluded"],
-                "binding_language_count": validated["binding_language_count"],
-                "hedging_language_count": validated["hedging_language_count"],
-                "summary": validated["summary"],
-                "findings": validated["findings"],
-                "document_confidence": validated["document_confidence"],
-                "document_confidence_reason": validated["document_confidence_reason"],
-                "scoring_breakdown": validated["scoring_breakdown"],
-                "llm_provider": effective_provider,
-                "llm_model": final_model,
-                "input_tokens": final_input_tokens,
-                "output_tokens": final_output_tokens,
-                "cost_estimate_usd": final_cost,
-                "analyzed_at": datetime.utcnow().isoformat()
-            }
-
-            analysis_store[analysis_id] = analysis_result
-
-            # Save to disk as well
-            result_path = RESULTS_DIR / f"{analysis_id}.json"
-            with open(result_path, "w") as f:
-                json.dump(analysis_result, f, indent=2)
-
-            # Update report status
-            reports_store[report_id]["status"] = "completed"
-            reports_store[report_id]["analysis_id"] = analysis_id
-            reports_store[report_id]["company_name"] = analysis_result["company_name"]
-
-        except Exception as e:
-            reports_store[report_id]["status"] = "failed"
-            reports_store[report_id]["error"] = str(e)
-            print(f"Analysis failed for report {report_id}: {e}")
-
-
-# ============================================================================
-async def run_multi_analysis(
-    primary_report_id: str,
-    report_ids: list[str],
-    company_name: str | None,
-    report_year: int | None,
-    provider_name: str | None,
-    api_key: str | None
-):
-    """
-    Background task: parse MULTIPLE PDFs → merge text → hybrid analysis → ONE result.
-    """
-    # 1. Masuk ke antrean (Semaphore)
-    async with LLM_CONCURRENCY:
-        analysis_id = str(uuid.uuid4())
-
-        try:
-            # 2. Update status awal
-            reports_store[primary_report_id]["status"] = "processing"
-
-            # Parse all PDFs and collect text
-            all_texts = []
-            total_pages = 0
-            file_names = []
-
-            for rid in report_ids:
+            sources, documents, texts = {}, [], []
+            complete_text = True
+            for number, rid in enumerate(report_ids, 1):
                 report = reports_store[rid]
-                file_path = report["file_path"]
-
-                temp_path = file_path + ".processing.pdf"
-                shutil.copy2(file_path, temp_path)
-
-                try:
-                    parsed_doc = parse_pdf(temp_path)
-                finally:
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-
-                page_offset = total_pages
-                total_pages += parsed_doc.page_count
-                file_names.append(parsed_doc.file_name)
-
-                # Add document separator with file info
-                doc_header = (
-                    f"\n\n{'=' * 60}\n"
-                    f"=== [DOCUMENT {len(all_texts) + 1}: {parsed_doc.file_name} "
-                    f"(pages {page_offset + 1}-{page_offset + parsed_doc.page_count})] ===\n"
-                    f"{'=' * 60}\n\n"
-                )
-                all_texts.append(doc_header + parsed_doc.full_text_with_markers)
-
-                # Update individual report metadata
-                reports_store[rid]["page_count"] = parsed_doc.page_count
-                reports_store[rid]["status"] = "analyzing"
-
-            # Merge all text
-            merged_text = "\n".join(all_texts)
-            merged_file_name = f"MERGED: {', '.join(file_names)}"
-
-            print(
-                f"  📎 Merged {len(report_ids)} documents: "
-                f"{total_pages} total pages, "
-                f"{len(merged_text)} chars"
-            )
-
-            reports_store[primary_report_id]["status"] = "analyzing"
-
-            # Prepare text with context window limits
-            estimated_tokens = len(merged_text) // 4
+                report["status"] = "processing"
+                parsed = parse_pdf(report["file_path"])
+                if not parsed.pages or not parsed.full_text_with_markers.strip():
+                    raise ValueError("No extractable text. OCR the PDF before uploading.")
+                source_id = f"document-{number}"
+                sources[source_id] = {page.page_number: page.full_text for page in parsed.pages}
+                complete_text = complete_text and len(parsed.pages) == parsed.page_count
+                documents.append({"id": source_id, "report_id": rid, "file_name": report["file_name"],
+                                  "page_count": parsed.page_count, "extracted_pages": len(parsed.pages)})
+                # Machine source IDs are unambiguous even for duplicate filenames.
+                texts.append(f"\n=== DOCUMENT {source_id} ===\n" + parsed.full_text_with_markers)
+                report["page_count"] = parsed.page_count
+                report["status"] = "analyzing"
             effective_provider = provider_name or os.getenv("LLM_PROVIDER", "gemini")
+            document_text = "\n".join(texts)
+            messages = build_analysis_prompt(document_text, "Uploaded report bundle",
+                                             sum(d["page_count"] for d in documents),
+                                             target_countries, complete_text)
+            # UTF-8 byte count is a conservative bound for multilingual inputs.
+            # Never silently discard middle pages and then claim a country is absent.
+            if sum(len(m["content"].encode("utf-8")) for m in messages) > _context_budget(effective_provider):
+                raise ValueError("Document exceeds the conservative provider context budget. Use fewer files or a larger-context provider.")
 
-            context_limits = {
-                "gemini": 900_000,
-                "qwen": 240_000,
-                "openai": 120_000,
-            }
-
-            max_tokens = context_limits.get(effective_provider, 120_000)
-
-            if estimated_tokens > max_tokens:
-                char_limit = max_tokens * 4
-                half = char_limit // 2
-                merged_text = (
-                    merged_text[:half]
-                    + "\n\n--- [DOCUMENT TRUNCATED FOR CONTEXT LIMIT — MIDDLE SECTIONS OMITTED] ---\n\n"
-                    + merged_text[-half:]
-                )
-                print(f"  📄 Merged text truncated: {estimated_tokens} tokens → ~{max_tokens} tokens")
-
-            # Build the adversarial prompt
-            messages = build_analysis_prompt(
-                document_text=merged_text,
-                file_name=merged_file_name,
-                page_count=total_pages
-            )
-
-            # ====================================================================
-            # HYBRID ROUTING (same logic as run_analysis)
-            # ====================================================================
-            final_model = ""
-            final_input_tokens = 0
-            final_output_tokens = 0
-            final_cost = 0.0
-
+            from llm_providers import GeminiProvider
+            responses = []
+            fallback = False
             if effective_provider == "gemini":
-                print(f"  ⚡ [TAHAP 1] Fast Scan merged docs dengan Gemini 3 Flash Preview...")
-                from llm_providers import GeminiProvider
-
-                flash_provider = GeminiProvider(api_key=api_key, model_name="gemini-3-flash-preview")
-                flash_response = await flash_provider.analyze(messages)
-                result_data = parse_llm_json(flash_response.content)
-
-                raw_score = int(result_data.get("overall_risk_score", 0))
-                indo_mentioned = result_data.get("indonesia_mentioned")
-                indo_status = str(result_data.get("indonesia_status", "")).lower()
-
-                needs_pro = False
-                routing_reason = ""
-
-                if raw_score >= 56:
-                    needs_pro = True
-                    routing_reason = f"Skor risiko tinggi ({raw_score} - High/Critical)"
-                elif indo_mentioned is False or indo_status == "silent":
-                    needs_pro = True
-                    routing_reason = "Terdeteksi Strategic Silence (Indonesia tidak dibahas)"
-
-                if needs_pro:
-                    print(f"🚩 [TAHAP 2] Trigger Pro aktif: {routing_reason}. Merutekan ke Gemini 3.1 Pro Preview...")
+                flash_model = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
+                pro_model = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+                response = await GeminiProvider(api_key=api_key, model_name=flash_model).analyze(messages)
+                responses.append(response)
+                raw = parse_llm_json(response.content)
+                regional = normalize_asia_result(raw, target_countries, sources, complete_text)
+                legacy = validate_analysis_result(raw, company_name)
+                escalate = needs_regional_escalation(regional) or legacy["overall_risk_score"] >= 56
+                if escalate:
                     try:
-                        pro_provider = GeminiProvider(api_key=api_key, model_name="gemini-3.1-pro-preview")
-                        pro_response = await pro_provider.analyze(messages)
-
-                        result_data = parse_llm_json(pro_response.content)
-                        final_model = "gemini-3.1-pro-preview (Hybrid Escalate)"
-                        final_input_tokens = flash_response.input_tokens + pro_response.input_tokens
-                        final_output_tokens = flash_response.output_tokens + pro_response.output_tokens
-
-                    except Exception as pro_error:
-                        print(f"⚠️ [TAHAP 2 GAGAL] Gemini Pro bermasalah ({pro_error}). Menggunakan fallback hasil Flash.")
-
-                        # Kembalikan ke hasil Flash (Tahap 1)
-                        result_data = parse_llm_json(flash_response.content)
-                        catatan = " [CATATAN SISTEM: Eskalasi deep analysis gagal karena server LLM sibuk. Ini adalah hasil Fast Scan.]"
-                        result_data["document_confidence_reason"] = str(result_data.get("document_confidence_reason", "")) + catatan
-
-                        final_model = "gemini-3-flash-preview (Pro Fallback)"
-                        final_input_tokens = flash_response.input_tokens
-                        final_output_tokens = flash_response.output_tokens
-                else:
-                    print("✅ Laporan tampak aman. Menyelesaikan dengan hasil Flash saja.")
-                    final_model = "gemini-3-flash-preview"
-                    final_input_tokens = flash_response.input_tokens
-                    final_output_tokens = flash_response.output_tokens
-
-                final_cost = 0.0
-
+                        pro = await GeminiProvider(api_key=api_key, model_name=pro_model).analyze(messages)
+                        responses.append(pro)
+                        pro_raw = parse_llm_json(pro.content)
+                        pro_regional = normalize_asia_result(pro_raw, target_countries, sources, complete_text)
+                        raw, regional, response = pro_raw, pro_regional, pro
+                    except Exception:
+                        fallback = True
             else:
-                provider = get_provider(provider_name=effective_provider, api_key=api_key)
-                llm_response = await provider.analyze(messages)
-                result_data = parse_llm_json(llm_response.content)
+                response = await get_provider(effective_provider, api_key).analyze(messages)
+                responses.append(response)
+                raw = parse_llm_json(response.content)
+                regional = normalize_asia_result(raw, target_countries, sources, complete_text)
 
-                final_model = llm_response.model
-                final_input_tokens = llm_response.input_tokens
-                final_output_tokens = llm_response.output_tokens
-                final_cost = llm_response.cost_estimate_usd
-
-            # Validate
-            validated = validate_analysis_result(result_data, company_name)
-
-            # Store ONE result
+            validated = validate_analysis_result(raw, company_name)
+            if fallback:
+                regional["validation_warnings"].append("Deep analysis unavailable; fast-scan result retained for human review.")
+                validated["document_confidence"] = "low"
+            if not complete_text:
+                regional["validation_warnings"].append("Some PDF pages have no extractable text; OCR review required. Silence scoring disabled.")
+                validated["document_confidence"] = "low"
             analysis_result = {
-                "id": analysis_id,
-                "report_id": primary_report_id,
-                "merged_report_ids": report_ids,
-                "merged_file_count": len(report_ids),
-                "company_name": validated["company_name"],
+                **validated, **regional, "id": analysis_id, "report_id": report_ids[0],
                 "report_year": validated["report_year"] or report_year,
-                "overall_risk_level": validated["overall_risk_level"],
-                "overall_risk_score": validated["overall_risk_score"],
-                "global_claim": validated["global_claim"],
-                "indonesia_mentioned": validated["indonesia_mentioned"],
-                "indonesia_status": validated["indonesia_status"],
-                "sea_countries_mentioned": validated["sea_countries_mentioned"],
-                "sea_countries_excluded": validated["sea_countries_excluded"],
-                "binding_language_count": validated["binding_language_count"],
-                "hedging_language_count": validated["hedging_language_count"],
-                "summary": validated["summary"],
-                "findings": validated["findings"],
-                "document_confidence": validated["document_confidence"],
-                "document_confidence_reason": validated["document_confidence_reason"],
-                "scoring_breakdown": validated["scoring_breakdown"],
-                "llm_provider": effective_provider,
-                "llm_model": final_model,
-                "input_tokens": final_input_tokens,
-                "output_tokens": final_output_tokens,
-                "cost_estimate_usd": final_cost,
-                "analyzed_at": datetime.utcnow().isoformat()
+                "source_documents": documents, "llm_provider": effective_provider,
+                "llm_model": response.model, "hybrid_fallback": fallback,
+                "input_tokens": sum(r.input_tokens for r in responses),
+                "output_tokens": sum(r.output_tokens for r in responses),
+                "cost_estimate_usd": sum(r.cost_estimate_usd for r in responses),
+                "cost_estimate_available": effective_provider == "openai",
+                "analyzed_at": datetime.now(timezone.utc).isoformat(),
             }
-
-            analysis_store[analysis_id] = analysis_result
-
+            if len(report_ids) > 1:
+                analysis_result.update(merged_report_ids=report_ids, merged_file_count=len(report_ids))
             result_path = RESULTS_DIR / f"{analysis_id}.json"
-            with open(result_path, "w") as f:
-                json.dump(analysis_result, f, indent=2)
-
-            # Mark ALL reports as completed with same analysis_id
+            temporary = result_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(analysis_result, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(result_path)
+            analysis_store[analysis_id] = analysis_result
             for rid in report_ids:
-                reports_store[rid]["status"] = "completed"
-                reports_store[rid]["analysis_id"] = analysis_id
-                reports_store[rid]["company_name"] = analysis_result["company_name"]
-
-            print(
-                f"  🎉 Multi-analysis selesai! "
-                f"{len(report_ids)} files merged → 1 result. "
-                f"Model: {final_model}"
-            )
-
-        except Exception as e:
-            import traceback
-            print(f"❌ Multi-analysis failed: {str(e)}")
-            print(traceback.format_exc())
+                reports_store[rid].update(status="completed", analysis_id=analysis_id,
+                                          company_name=validated["company_name"])
+        except Exception as exc:
+            # Never return provider URLs, API keys, or raw document text in errors.
+            safe_message = "Analysis failed. Check PDF text, provider access and context limits, then retry."
+            if isinstance(exc, ValueError) and str(exc).startswith(("No extractable text.", "Document exceeds", "Provider returned no")):
+                safe_message = str(exc)
             for rid in report_ids:
-                if rid in reports_store:
-                    reports_store[rid]["status"] = "failed"
-                    reports_store[rid]["error"] = str(e)
+                reports_store[rid].update(status="failed", error=safe_message)
+
+
+async def run_analysis(report_id, file_path, company_name, report_year, provider_name, api_key, target_countries=None):
+    await _run_reports([report_id], company_name, report_year, provider_name, api_key, target_countries or list(COUNTRIES))
+
+
+async def run_multi_analysis(primary_report_id, report_ids, company_name, report_year, provider_name, api_key, target_countries=None):
+    await _run_reports(report_ids, company_name, report_year, provider_name, api_key, target_countries or list(COUNTRIES))
 
 
 # ============================================================================
@@ -943,7 +564,7 @@ async def root(request: Request):
     """Health check and API info. Supports both GET and HEAD for Cloud Run health checks."""
     body = {
         "name": "Corporate Accountability Engine (CAE)",
-        "version": "2.2.0",
+        "version": "3.0.0",
         "organization": "Sinergia Animal International / AFFA",
         "status": "operational",
         "evasion_patterns": 9,
@@ -974,12 +595,28 @@ async def root(request: Request):
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health(request: Request):
     """Simple health check for uptime monitoring."""
-    body = {"status": "ok", "version": "2.2.0", "timestamp": datetime.utcnow().isoformat()}
+    body = {"status": "ok", "version": "3.0.0", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if request.method == "HEAD":
         return Response(status_code=200)
 
     return body
+
+@app.get("/countries")
+async def list_countries():
+    """Supported country/area codes and transparent geographic scope."""
+    return catalog()
+
+
+@app.get("/capabilities")
+async def capabilities():
+    return {"schema_version": "3.0", "default_scope": "asia",
+            "country_count": len(COUNTRIES), "country_selection": "target_countries",
+            "legacy_overall_risk_scope": "Indonesia", "regional_scoring_version": "asia-evidence-v1",
+            "output_language": "en", "source_quotes": "original language",
+            "ocr": False, "legal_compliance_checks": False,
+            "storage": "local files and in-memory report status; single instance only"}
+
 
 # --- UPLOAD ---
 
@@ -988,7 +625,7 @@ async def upload_file(file: UploadFile = File(...)):
     """Upload dan simpan satu file PDF dengan perlindungan memori (Max 25MB)."""
     
     # Validasi 1: Format File
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Hanya file PDF yang diperbolehkan.")
         
     # Validasi 2: Ukuran File (Baca per 1MB agar RAM server tidak jebol)
@@ -1001,15 +638,22 @@ async def upload_file(file: UploadFile = File(...)):
                 detail=f"File terlalu besar! Maksimal ukuran file adalah {MAX_FILE_SIZE_MB} MB."
             )
             
+    if file_size == 0:
+        raise HTTPException(status_code=400, detail="Empty PDF.")
+    await file.seek(0)
+    if not (await file.read(1024)).lstrip().startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Invalid PDF signature.")
+
     # Kembalikan pointer pembacaan ke awal file
     await file.seek(0)
     
     # --- LOGIKA PENYIMPANAN YANG AKTIF ---
-    report_id = f"rep_{uuid.uuid4().hex[:8]}"
+    report_id = f"rep_{uuid.uuid4().hex}"
     file_path = UPLOAD_DIR / f"{report_id}.pdf"
     
     with open(file_path, "wb") as f:
-        f.write(await file.read())
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
 
     # Simpan status ke memory store
     reports_store[report_id] = {
@@ -1020,7 +664,7 @@ async def upload_file(file: UploadFile = File(...)):
         "report_year": None,
         "status": "uploaded",
         "page_count": 0,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
     
     return UploadResponse(
@@ -1064,6 +708,8 @@ async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTa
     if request.report_year:
         report["report_year"] = request.report_year
 
+    report["status"] = "processing"
+    report.pop("error", None)
     # Launch background analysis
     background_tasks.add_task(
         run_analysis,
@@ -1072,7 +718,8 @@ async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTa
         company_name=request.company_name,
         report_year=request.report_year,
         provider_name=request.provider,
-        api_key=request.api_key
+        api_key=request.api_key,
+        target_countries=request.target_countries
     )
 
     return {
@@ -1097,8 +744,10 @@ async def analyze_multi_report(request: AnalyzeMultiRequest, background_tasks: B
     4. Store ONE analysis result
 
     Poll GET /reports/{primary_report_id} for status (first report_id in the list).
-    Max: 10 files per request.
+    Max: 3 files per request.
     """
+    if len(set(request.report_ids)) != len(request.report_ids):
+        raise HTTPException(status_code=422, detail="Duplicate report_ids are not allowed.")
     # Validate all report_ids exist
     for rid in request.report_ids:
         if rid not in reports_store:
@@ -1128,6 +777,9 @@ async def analyze_multi_report(request: AnalyzeMultiRequest, background_tasks: B
         if request.report_year:
             reports_store[rid]["report_year"] = request.report_year
 
+    for rid in request.report_ids:
+        reports_store[rid]["status"] = "processing"
+        reports_store[rid].pop("error", None)
     primary_report_id = request.report_ids[0]
 
     background_tasks.add_task(
@@ -1137,7 +789,8 @@ async def analyze_multi_report(request: AnalyzeMultiRequest, background_tasks: B
         company_name=request.company_name,
         report_year=request.report_year,
         provider_name=request.provider,
-        api_key=request.api_key
+        api_key=request.api_key,
+        target_countries=request.target_countries
     )
 
     return {
@@ -1200,11 +853,13 @@ async def list_reports():
 @app.get("/analysis/{analysis_id}")
 async def get_analysis(analysis_id: str):
     """Get the full analysis results including all findings."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", analysis_id):
+        raise HTTPException(status_code=404, detail="Analysis not found.")
     if analysis_id not in analysis_store:
         # Try loading from disk
         result_path = RESULTS_DIR / f"{analysis_id}.json"
         if result_path.exists():
-            with open(result_path) as f:
+            with open(result_path, encoding="utf-8") as f:
                 analysis_store[analysis_id] = json.load(f)
         else:
             raise HTTPException(status_code=404, detail="Analysis not found.")
@@ -1216,10 +871,12 @@ async def get_analysis(analysis_id: str):
 @app.get("/analysis/{analysis_id}/export")
 async def export_analysis_csv(analysis_id: str):
     """Export findings as CSV-formatted data."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", analysis_id):
+        raise HTTPException(status_code=404, detail="Analysis not found.")
     if analysis_id not in analysis_store:
         result_path = RESULTS_DIR / f"{analysis_id}.json"
         if result_path.exists():
-            with open(result_path) as f:
+            with open(result_path, encoding="utf-8") as f:
                 analysis_store[analysis_id] = json.load(f)
         else:
             raise HTTPException(status_code=404, detail="Analysis not found.")
@@ -1229,14 +886,17 @@ async def export_analysis_csv(analysis_id: str):
 
     headers = [
         "finding_type", "severity", "title", "description",
-        "exact_quote", "page_number", "section", "country_affected"
+        "exact_quote", "page_number", "section", "country_affected", "source_document"
     ]
 
     csv_lines = [",".join(headers)]
     for f in findings:
         row = []
         for h in headers:
-            value = str(f.get(h, "")).replace('"', '""')
+            value = str(f.get(h, "") or "")
+            if value.lstrip().startswith(("=", "+", "-", "@")):
+                value = "'" + value
+            value = value.replace('"', '""')
             row.append(f'"{value}"')
         csv_lines.append(",".join(row))
 
@@ -1263,18 +923,18 @@ async def list_providers():
             "gemini": {
                 "name": "Google Gemini (Hybrid)",
                 "models": {
-                    "fast": "gemini-3-flash-preview",
-                    "pro": "gemini-3.1-pro-preview"
+                    "fast": os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview"),
+                    "pro": os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
                 },
                 "routing": "Auto-escalates to 3.1 Pro Preview for high-risk reports",
-                "free": True,
+                "free": False,
                 "context_window": "1M tokens",
                 "best_for": "Large documents (200+ pages), single-pass analysis",
                 "get_key": "https://aistudio.google.com/apikey"
             },
             "qwen": {
                 "name": "Qwen 3.5-397B-A17B (DashScope)",
-                "model": "qwen3.5-397b-a17b",
+                "model": os.getenv("QWEN_MODEL", "qwen3.5-397b-a17b"),
                 "free": False,
                 "context_window": "256k tokens",
                 "best_for": "Backup provider, large reasoning model",
@@ -1282,10 +942,10 @@ async def list_providers():
             },
             "openai": {
                 "name": "OpenAI GPT-4o",
-                "model": "gpt-4o",
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
                 "free": False,
                 "context_window": "128k tokens",
-                "cost": "$0.15-$0.30 per 200-page report",
+                "cost": "Usage-based; confirm current provider billing",
                 "best_for": "Highest quality (if budget allows)",
                 "get_key": "https://platform.openai.com/api-keys"
             }
@@ -1321,7 +981,7 @@ async def test_provider(request: ProviderTestRequest):
             content={
                 "status": "failed",
                 "provider": request.provider,
-                "error": str(e),
+                "error": "Provider connection failed. Check credentials, model access and service availability.",
                 "message": "Connection failed. Check your API key."
             }
         )

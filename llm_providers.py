@@ -124,12 +124,12 @@ class GeminiProvider(BaseLLMProvider):
             }
         }
 
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
 
         async def _make_request():
             async with LLM_CONCURRENCY:
                 async with httpx.AsyncClient(timeout=180.0) as client:
-                    response = await client.post(url, json=payload)
+                    response = await client.post(url, json=payload, headers={"x-goog-api-key": self.api_key})
                     response.raise_for_status()
                     return response.json()
 
@@ -194,7 +194,7 @@ class QwenProvider(BaseLLMProvider):
                 "Qwen is listed as a backup provider but DashScope International is not yet available. "
                 "Set the DASHSCOPE_API_KEY env var when it launches: https://dashscope.console.aliyun.com/"
             )
-        self.model = "qwen3.5-397b-a17b"
+        self.model = os.getenv("QWEN_MODEL", "qwen3.5-397b-a17b")
         self.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
@@ -260,7 +260,7 @@ class OpenAIProvider(BaseLLMProvider):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY is required.")
-        self.model = "gpt-4o"
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
         self.base_url = "https://api.openai.com/v1"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:

@@ -280,6 +280,8 @@ def chunk_document(
     Returns:
         List of chunk dicts with text, start_page, end_page
     """
+    if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("Require chunk_size > overlap >= 0")
     full_text = parsed_doc.full_text_with_markers
 
     # If document fits in one chunk, return it directly
@@ -317,7 +319,9 @@ def chunk_document(
             "chunk_index": chunk_index
         })
 
-        start = end - overlap
+        if end >= len(full_text):
+            break
+        start = max(start + 1, end - overlap)
         chunk_index += 1
 
     return chunks

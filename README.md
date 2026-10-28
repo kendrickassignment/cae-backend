@@ -1,284 +1,84 @@
-# 🔍 Corporate Accountability Engine (CAE) — Backend
+# Corporate Accountability Engine (CAE) backend v3
 
-**Adversarial AI auditor for corporate sustainability reports.**
-Built for **Sinergia Animal International / Act For Farmed Animals (AFFA).**
+Document-based screening of corporate cage-free egg commitments for Sinergia Animal / AFFA. The API now assesses requested countries and areas across Asia, while preserving the Indonesia and Southeast Asia fields consumed by [cae-animals](https://github.com/kendrickassignment/cae-animals).
 
-Detects greenwashing in cage-free egg commitments with a focus on Indonesia.
+## Upgrade
 
-> Frontend: [cae-animals.com](https://cae-animals.com) | Backend: [cae-backend-340454867661.asia-southeast3.run.app](https://cae-backend-340454867661.asia-southeast3.run.app)
+- 51 country/area codes across five Asian subregions; select `target_countries` or omit it for the whole catalog.
+- Country status, document/local-page citations, deterministic regional scoring and explicit unknown/coverage counts.
+- Citation text checked against the source page. Missing evidence is unknown, not automatic misconduct or zero risk.
+- Shared single/multi-PDF pipeline, region-aware Gemini escalation, corrected semaphore deadlock and country-safe deduplication.
+- No silent context truncation; unreadable PDFs require OCR; missing text pages disable regional silence scoring.
+- Old requests and legacy response fields remain valid. Existing frontend does not yet render/save regional fields; see [integration plan](docs/asia-upgrade.md).
 
----
+This is risk screening, not legal compliance certification. Quote matching verifies provenance, not truth or model interpretation. Human review remains required. Regional scoring has not been calibrated against a labeled real-report corpus.
 
-## 💰 Cost
+## Run and test
 
-| Component | Service | Cost | Notes |
-| --- | --- | --- | --- |
-| **AI (Primary)** | Google Gemini API (3.0 Flash & 3.1 Pro) | Paid ($300 Balance) | **Hybrid Routing enabled.** 25 req/min, 1M token context |
-| **AI (Backup)** | Qwen 3.5-397B-A17B (DashScope) | Paid per usage | 256K token context |
-| **Hosting** | Google Cloud Run (asia-southeast3 / Jakarta) | Free tier | Scale-to-zero, 300s timeout |
-| **PDF Parsing** | PyMuPDF | Free | Open-source |
-| **Frontend** | Lovable | $25/month | React hosting + deployment |
-| **Database** | Supabase | Free | PostgreSQL + Auth + Storage + Realtime |
-| **Email** | Resend | Free | 100 emails/day |
-| **Domain** | cae-animals.com | $6/year | Custom domain |
-| **Total** |  | **~$331 + API Usage** | API costs deducted from $300 prepaid balance |
+Python 3.12:
 
----
-
-## 🚀 Quick Start (Local)
-
-### 1. Clone and install
-
-```bash
-git clone https://github.com/kendrickassignment/cae-backend.git
-cd cae-backend
-pip install -r requirements.txt
+```sh
+python -m venv .venv
+# Activate .venv using the command for your shell
+python -m pip install -r requirements-dev.txt
+cp env.example .env
+# Set a provider API key in .env
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+python -m pytest -q
 ```
 
-### 2. Get your API key
+Interactive request documentation: `/docs`. Tests use generated PDFs and mocked providers, with no paid model calls or production data.
 
-Go to [Google AI Studio](https://aistudio.google.com/apikey) and create a Gemini API key. Make sure your billing account is linked to access the Paid Tier models and higher rate limits.
+## API
 
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env — see Environment Variables section below
-```
-
-### 4. Run the server
-
-```bash
-python main.py
-```
-
-* Server starts at `http://localhost:8000`
-* API docs at `http://localhost:8000/docs` (interactive Swagger UI)
-
-### 5. Test it
-
-```bash
-# Upload a PDF
-curl -X POST http://localhost:8000/upload \
-  -F "file=@sustainability_report.pdf"
-
-# Start analysis (use the report_id from upload response)
-curl -X POST http://localhost:8000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"report_id": "YOUR_REPORT_ID"}'
-
-# Check status
-curl http://localhost:8000/reports/YOUR_REPORT_ID
-
-# Get results (use analysis_id from status response)
-curl http://localhost:8000/analysis/YOUR_ANALYSIS_ID
-```
-
----
-
-## 🌐 API Endpoints
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/` | API info and health check |
-| `GET` | `/health` | Simple health check |
-| `POST` | `/upload` | Upload a PDF report (max 25MB) |
-| `POST` | `/analyze` | Trigger AI analysis on uploaded report |
-| `POST` | `/analyze-multi` | Trigger merged analysis on multiple uploaded reports |
-| `GET` | `/reports` | List all reports |
-| `GET` | `/reports/{id}` | Get report status |
-| `GET` | `/analysis/{id}` | Get full analysis results |
-| `GET` | `/analysis/{id}/export` | Export findings as CSV |
-| `GET` | `/providers` | List available AI providers |
-| `POST` | `/providers/test` | Test an API key |
-
----
-
-## 🧠 How the Analysis Works
-
-1. **Upload:** PDF is saved and a `report_id` is returned.
-2. **Duplicate Check:** SHA-256 file hash compared against existing analyses. Company + year combination also checked. User can proceed or view existing.
-3. **Parse:** PyMuPDF extracts all text with page numbers. Footnotes, tables, and appendices are specially tagged.
-4. **Prompt:** The adversarial system prompt tells the AI to act as a strict compliance officer hunting for **9 greenwashing evasion patterns**.
-5. **Hybrid AI Analysis (The Engine):**
-   - **Stage 1 (Fast Scan):** The system uses `gemini-3.0-flash` to rapidly scan the document and extract initial findings.
-   - **Stage 2 (Pro Escalation):** If the initial scan detects severe greenwashing (Score >= 56) OR "Strategic Silence" (Indonesia is omitted), the system automatically routes the query to `gemini-3.1-pro` for deep adversarial reasoning and evidence extraction.
-6. **Deduplicate:** Two-layer system removes noisy/duplicate findings:
-   - **AI Prompt Layer** — instructs LLM to group related findings (max 3-5 per pattern, target 7-15 total)
-   - **Python Safety Net** — `deduplicate_findings()` merges identical findings server-side, collecting all page references into one grouped finding
-7. **Score:** Deterministic, tamper-proof scoring — AI suggests a score, Python enforces `score_to_level()` mapping. AI cannot override the risk level.
-8. **Store:** Results saved to Supabase PostgreSQL with Row Level Security. Admin notifications triggered via edge functions.
-
-### The 9 Evasion Patterns Detected
-
-| # | Pattern | Description | Severity |
-| --- | --- | --- | --- |
-| 1 | **Hedging Language** | "We aim to", "where feasible" — soft language avoiding binding commitments | 🟡 Medium |
-| 2 | **Strategic Silence** | Indonesia not mentioned at all in cage-free context | 🔴 Critical |
-| 3 | **Geographic Tiering** | "Leading markets" get real commitments; everywhere else gets vague deadlines | 🔴 Critical |
-| 4 | **Franchise Firewall** | "Company-operated stores only" — franchises excluded | 🟠 High |
-| 5 | **Availability Clause** | "Where supply is readily available" — indefinite escape hatch | 🟡 Medium |
-| 6 | **Timeline Deferral** | Pushing deadlines indefinitely ("by 2030... by 2035... by 2040...") | 🟠 High |
-| 7 | **Silent Delisting** | Quietly removing previously included countries from cage-free programs | 🔴 Critical |
-| 8 | **Corporate Ghosting** | No response to inquiries, no progress updates, no accountability | 🟠 High |
-| 9 | **Commitment Downgrade** | Weakening language from previous years — absolute → relative, specific → vague | 🟠 High |
-
-### Scoring Algorithm
-
-```python
-def score_to_level(score: int) -> str:
-    """Deterministic risk mapping — bypasses AI hallucination"""
-    if score >= 80: return "critical"
-    if score >= 56: return "high"
-    if score >= 31: return "medium"
-    return "low"
-```
-
-| Factor | Points | Condition |
-| --- | --- | --- |
-| **Strategic Silence** | +35 | Indonesia not mentioned in cage-free context |
-| **Geographic Exclusion** | +30 | Indonesia explicitly excluded |
-| **Franchise Firewall** | +15 | Commitments limited to company-owned |
-| **Corporate Ghosting** | +15 | No external accountability mechanism |
-| **Commitment Downgrade** | +15 | Weakened language from previous years |
-| **Timeline Deferral** | +10 | Indonesia deadlines pushed beyond 2030 |
-| **Hedging Language** | +2 each | Non-binding phrases (max +10) |
-| **Availability Clause** | +5 each | Escape conditions (max +10) |
-| **Binding Language** | -3 each | Strong commitments (max -15) |
-| **Third-Party Audit** | -5 | Independent verification exists |
-| **Indonesia Data** | -10 | Indonesia-specific progress reported |
-
----
-
-## ☁️ Deploy to Google Cloud Run
-
-CAE backend is deployed on **Google Cloud Run** in the `asia-southeast3` (Jakarta) region.
-
-### Quick Deploy
-
-```bash
-gcloud run deploy cae-backend \
-  --source . \
-  --region asia-southeast3 \
-  --allow-unauthenticated \
-  --memory 1Gi \
-  --cpu 1 \
-  --timeout 300 \
-  --max-instances 3 \
-  --set-env-vars LLM_PROVIDER=gemini \
-  --set-secrets GEMINI_API_KEY=gemini-api-key:latest
-```
-
-### Deploy with Service YAML
-
-```bash
-# Build and push image first
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/cae-backend
-
-# Deploy using config
-gcloud run services replace cloudrun-service.yaml --region asia-southeast3
-```
-
-### Key Cloud Run Settings
-
-| Setting | Value | Why |
-| --- | --- | --- |
-| **Region** | `asia-southeast3` (Jakarta) | Closest to Indonesia — low latency |
-| **Memory** | 1 Gi | PyMuPDF + large PDF parsing |
-| **Timeout** | 300s (5 min) | Gemini Pro deep analysis can take 2-4 min |
-| **Max instances** | 3 | Cost control |
-| **Min instances** | 0 | Scale-to-zero when idle |
-| **Concurrency** | 10 | Requests per container |
-
-> **Note:** Set the backend URL (`https://cae-backend-340454867661.asia-southeast3.run.app`) in your Lovable frontend's Settings page as the "Backend API URL." Frontend is at [cae-animals.com](https://cae-animals.com).
-
----
-
-## ⚙️ Environment Variables
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `GEMINI_API_KEY` | ✅ | Google AI Studio API key (Paid tier account required for Pro model) |
-| `DASHSCOPE_API_KEY` | Optional | Qwen API key (backup — pending DashScope International launch) |
-| `OPENAI_API_KEY` | Optional | OpenAI API key (premium provider, ~$25/month) |
-| `LLM_PROVIDER` | Optional | Default provider: `gemini`, `qwen`, or `openai` (default: `gemini`) |
-| `SUPABASE_URL` | ✅ | Your Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service role key (for storing results + notifications) |
-| `FRONTEND_URL` | ✅ | Frontend URL for CORS (e.g., `https://cae-animals.com`) |
-| `PORT` | Optional | Server port (default: `8000`, Cloud Run uses `8080`) |
-
----
-
-## 🔄 Switching AI Providers
-
-Set the `LLM_PROVIDER` environment variable:
-
-```bash
-# Use Gemini (default — best for large docs, 1M token context, hybrid routing)
-LLM_PROVIDER=gemini
-
-# Use Qwen (backup — requires DASHSCOPE_API_KEY, pending international availability)
-LLM_PROVIDER=qwen
-
-# Use OpenAI (highest quality, ~$25/month)
-LLM_PROVIDER=openai
-```
-
-Or override per-request in the `/analyze` endpoint:
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /`, `GET /health` | Version and service health (not provider readiness) |
+| `GET /countries`, `GET /capabilities` | Catalog, scope and limitations |
+| `POST /upload` | One PDF, maximum 25 MB |
+| `POST /analyze` | Analyze one uploaded report |
+| `POST /analyze-multi` | Analyze 1-3 distinct uploaded reports |
+| `GET /reports`, `GET /reports/{id}` | Report list and job status |
+| `GET /analysis/{id}` | Full legacy + regional result |
+| `GET /analysis/{id}/export` | Findings CSV in the existing JSON envelope |
+| `GET /providers`, `POST /providers/test` | Provider configuration / explicit connection test |
 
 ```json
 {
-  "report_id": "xxx",
-  "provider": "qwen",
-  "api_key": "your-dashscope-key"
+  "report_id": "ID_FROM_UPLOAD",
+  "company_name": "Company under review",
+  "report_year": 2025,
+  "provider": "gemini",
+  "target_countries": ["ID", "JP", "IN", "TH", "VN"]
 }
 ```
 
-### AI Provider Comparison
+Multi-file uses `report_ids`. Poll the returned ID, then fetch `analysis_url` after completion. Active reports return 409; unsupported/empty country selections and duplicate report IDs are rejected.
 
-| Provider | Model | Context Window | Cost | Status | Best For |
-| --- | --- | --- | --- | --- | --- |
-| **Google Gemini** | `gemini-3.0-flash` & `gemini-3.1-pro` | 1M tokens | Paid Tier ($300 Balance) | ✅ Active | Large documents (200+ pages), deep adversarial analysis — **Primary** |
-| **Qwen** | `qwen3.5-235b-a22b` | 131K tokens | Pay-as-you-go | ⏳ Pending | Backup — DashScope International not yet available |
-| **OpenAI** | `gpt-4o` | 128K tokens | ~$25/month | ✅ Ready | Highest quality analysis (if grant funded) |
+## Result semantics
 
----
+`overall_risk_score`, `overall_risk_level`, `indonesia_*`, `sea_countries_*` keep the legacy contract. Overall risk is still Indonesia-specific, model-calculated with server clamping and risk-band mapping, not a server-recomputed regional score.
 
-## 🔒 Security
+`country_assessments` includes every requested country, including unknown entries. `regional_risk_score` is the maximum score among assessed countries. Always show `coverage.assessed`, `coverage.requested` and `coverage.unknown` alongside it. If none can be assessed, score is null and level is unknown.
 
-* ✅ **CORS** restricted to `FRONTEND_URL` (cae-animals.com) — rejects unauthorized origins
-* ✅ **Supabase service role** used only server-side for storing results and triggering notifications
-* ✅ **Tamper-proof scoring** — Python enforces `score_to_level()`, AI cannot override risk levels
-* ✅ **SHA-256 file hashing** for duplicate PDF detection
-* ✅ **Input validation** on all endpoints
-* ✅ **No API keys stored server-side** — users provide their own keys per-request or via settings
-* ✅ **Cloud Run** — containerized, auto-scales, Google-managed infrastructure
+`source_documents` maps bundle IDs such as `document-1` to original filenames/report IDs. Page numbers are local to each PDF. Quotes retain the original language; explanations are requested in English. OCR and translation are not implemented.
 
----
+## Deployment boundaries
 
-## 📁 File Structure
+This code upgrade does not deploy Cloud Run or modify Supabase. Model defaults are retained and configurable via `env.example`; verify model availability in your target account before release.
 
-```text
-cae-backend/
-├── main.py                 # FastAPI app — all endpoints & hybrid routing logic
-├── pdf_parser.py           # Forensic PDF parser (PyMuPDF)
-├── llm_providers.py        # Multi-provider LLM abstraction (Gemini, Qwen, OpenAI)
-├── system_prompt.py        # Adversarial AI prompt (the brain)
-├── requirements.txt        # Python dependencies
-├── .env.example            # Environment variable template
-├── Dockerfile              # Container for Cloud Run deployment
-├── cloudrun-service.yaml   # GCP Cloud Run service config
-├── README.md               # This file
-├── uploads/                # Uploaded PDFs (created at runtime)
-└── results/                # Analysis JSON results (created at runtime)
-```
+Inherited prototype limitations: PDF/result files are local; report/job status is in memory; no backend user authentication or tenant isolation. CORS is not authentication. Use trusted/private access, one process/instance and persistent storage for evaluation. Cloud Run ephemeral storage, multiple instances and CPU throttling after background responses are unsuitable for durable jobs as currently configured. Existing YAML files are historical examples, not production scaling guarantees.
 
----
+A public rollout requires authenticated ownership, shared object/result storage and durable workers. See [implementation and rollout plan](docs/asia-upgrade.md) for acceptance gates, frontend/Supabase handoff and rollback.
 
-## 🛡️ Built by Kendrick with ❤️
+## Modules
 
-> Frontend: [cae-animals.com](https://cae-animals.com) | Backend: [cae-backend-340454867661.asia-southeast3.run.app](https://cae-backend-340454867661.asia-southeast3.run.app)
+- `main.py`: API, request validation and shared pipeline.
+- `geography.py`: versioned country catalog.
+- `asia_analysis.py`: citation validation, country scoring and coverage.
+- `system_prompt.py`: legacy compatibility plus Asia evidence rules.
+- `llm_providers.py`: Gemini, Qwen and OpenAI clients.
+- `pdf_parser.py`: page-preserving extraction.
+- `tests/`: deterministic unit/API/concurrency regression tests.
 
-This tool empowers advocacy campaigns with instant, citation-backed evidence to hold multinational corporations accountable for their cage-free egg commitments in Indonesia.
-
-**2 weeks → 3-5 minutes.** That's the power of adversarial AI.
+Geography follows [UN M49](https://unstats.un.org/unsd/methodology/m49/)-inspired regions plus Taiwan as a separate reporting market; this is not a sovereignty/legal determination.
