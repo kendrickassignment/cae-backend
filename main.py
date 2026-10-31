@@ -38,7 +38,7 @@ from asia_analysis import normalize_asia_result, needs_regional_escalation
 
 from pdf_parser import parse_pdf
 from system_prompt import build_analysis_prompt
-from llm_providers import get_provider, PROVIDERS
+from llm_providers import get_provider, DEFAULT_QWEN_MODEL, resolve_provider_name
 
 # ============================================================================
 # CONFIG
@@ -172,7 +172,7 @@ class AnalyzeRequest(RegionalOptions):
     report_id: str
     company_name: str | None = None
     report_year: int | None = None
-    provider: str | None = None # gemini, qwen, openai
+    provider: str | None = None # gemini, qwen
     api_key: str | None = None # Optional override
 
 class AnalyzeMultiRequest(RegionalOptions):
@@ -449,7 +449,10 @@ JOB_CONCURRENCY = asyncio.Semaphore(5)
 
 
 def _context_budget(provider):
-    return {"gemini": 900_000, "qwen": 220_000, "openai": 110_000}.get(provider, 110_000)
+    if provider == "qwen":
+        # Conservative UTF-8 byte bound, not a tokenizer estimate.
+        return 900_000 if os.getenv("QWEN_MODEL", DEFAULT_QWEN_MODEL) == DEFAULT_QWEN_MODEL else 220_000
+    return 900_000
 
 
 async def _run_reports(report_ids, company_name, report_year, provider_name, api_key, target_countries):
@@ -473,7 +476,7 @@ async def _run_reports(report_ids, company_name, report_year, provider_name, api
                 texts.append(f"\n=== DOCUMENT {source_id} ===\n" + parsed.full_text_with_markers)
                 report["page_count"] = parsed.page_count
                 report["status"] = "analyzing"
-            effective_provider = provider_name or os.getenv("LLM_PROVIDER", "gemini")
+            effective_provider = resolve_provider_name(provider_name)
             document_text = "\n".join(texts)
             messages = build_analysis_prompt(document_text, "Uploaded report bundle",
                                              sum(d["page_count"] for d in documents),
@@ -525,7 +528,7 @@ async def _run_reports(report_ids, company_name, report_year, provider_name, api
                 "input_tokens": sum(r.input_tokens for r in responses),
                 "output_tokens": sum(r.output_tokens for r in responses),
                 "cost_estimate_usd": sum(r.cost_estimate_usd for r in responses),
-                "cost_estimate_available": effective_provider == "openai",
+                "cost_estimate_available": False,
                 "analyzed_at": datetime.now(timezone.utc).isoformat(),
             }
             if len(report_ids) > 1:
@@ -696,11 +699,10 @@ async def analyze_report(request: AnalyzeRequest, background_tasks: BackgroundTa
         raise HTTPException(status_code=409, detail="Analysis already in progress.")
 
     # Validate provider if specified
-    if request.provider and request.provider not in PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown provider: {request.provider}. Available: {', '.join(PROVIDERS.keys())}"
-        )
+    try:
+        request.provider = resolve_provider_name(request.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400 if request.provider else 503, detail=str(exc)) from exc
 
     # Update metadata if provided
     if request.company_name:
@@ -764,11 +766,10 @@ async def analyze_multi_report(request: AnalyzeMultiRequest, background_tasks: B
                 detail=f"Report {rid} is already being analyzed."
             )
 
-    if request.provider and request.provider not in PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown provider: {request.provider}. Available: {', '.join(PROVIDERS.keys())}"
-        )
+    try:
+        request.provider = resolve_provider_name(request.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400 if request.provider else 503, detail=str(exc)) from exc
 
     # Update metadata on all reports
     for rid in request.report_ids:
@@ -917,8 +918,12 @@ async def export_analysis_csv(analysis_id: str):
 @app.get("/providers")
 async def list_providers():
     """List available LLM providers and their details."""
+    try:
+        default_provider = resolve_provider_name()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
-        "default": os.getenv("LLM_PROVIDER", "gemini"),
+        "default": default_provider,
         "available": {
             "gemini": {
                 "name": "Google Gemini (Hybrid)",
@@ -933,22 +938,13 @@ async def list_providers():
                 "get_key": "https://aistudio.google.com/apikey"
             },
             "qwen": {
-                "name": "Qwen 3.5-397B-A17B (DashScope)",
-                "model": os.getenv("QWEN_MODEL", "qwen3.5-397b-a17b"),
+                "name": "Qwen 3.8 Max (Alibaba Cloud)",
+                "model": os.getenv("QWEN_MODEL", DEFAULT_QWEN_MODEL),
                 "free": False,
-                "context_window": "256k tokens",
-                "best_for": "Backup provider, large reasoning model",
+                "context_window": "~1M tokens for qwen3.8-max; overrides may differ",
+                "best_for": "Long-document country evidence analysis and structured JSON",
                 "get_key": "https://dashscope.console.aliyun.com/"
             },
-            "openai": {
-                "name": "OpenAI GPT-4o",
-                "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
-                "free": False,
-                "context_window": "128k tokens",
-                "cost": "Usage-based; confirm current provider billing",
-                "best_for": "Highest quality (if budget allows)",
-                "get_key": "https://platform.openai.com/api-keys"
-            }
         }
     }
 
@@ -962,7 +958,7 @@ async def test_provider(request: ProviderTestRequest):
         )
 
         test_messages = [
-            {"role": "system", "content": "You are a test bot. Respond with exactly: {\"status\": \"ok\"}"},
+            {"role": "system", "content": "You are a test bot. Respond with exactly this JSON object: {\"status\": \"ok\"}"},
             {"role": "user", "content": "Test connection."}
         ]
 

@@ -3,7 +3,7 @@ Corporate Accountability Engine (CAE) — Adversarial System Prompt
 Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
 
 This module contains the adversarial AI prompt that powers the greenwashing detection engine.
-The prompt is designed to work with any LLM provider (Gemini, Groq, Mistral, OpenAI).
+The prompt is designed to work with any LLM provider (Gemini and Qwen).
 
 Updated: Feb 2026 — v2.1.0
   - 9 evasion patterns (8 base + timeline deferral)
@@ -314,7 +314,7 @@ def build_analysis_prompt(
 ) -> list[dict]:
     """
     Build the complete message array for the LLM API call.
-    Compatible with OpenAI, Gemini, Groq, and Mistral chat formats.
+    Compatible with Gemini and Qwen chat formats.
     """
     from geography import COUNTRIES
     import json

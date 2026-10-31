@@ -20,7 +20,7 @@ def response(raw=None, model="test-model"):
                   "indonesia_status":"partial", "findings":[],
                   "country_assessments":[{"country_code":"JP", "status":"excluded", "evidence":[{
                       "source_document":"document-1", "page_number":1, "exact_quote":QUOTE}]}]}
-    return LLMResponse(json.dumps(raw), model, "openai", 10, 5, 15, 0.01)
+    return LLMResponse(json.dumps(raw), model, "qwen", 10, 5, 15, 0.01)
 
 
 def pdf_bytes(text=QUOTE, blank_page=False):
@@ -53,7 +53,7 @@ def upload(client, data=None, filename="sustainability.pdf"):
 
 
 def analyze(client, rid, **options):
-    return client.post("/analyze",json={"report_id":rid,"provider":"openai","target_countries":["JP","ID"],**options})
+    return client.post("/analyze",json={"report_id":rid,"provider":"qwen","target_countries":["JP","ID"],**options})
 
 
 def test_single_upload_analysis_poll_export_and_disk_reload(client):
@@ -74,7 +74,7 @@ def test_single_upload_analysis_poll_export_and_disk_reload(client):
 
 def test_legacy_request_defaults_to_all_asia(client):
     rid = upload(client)
-    assert client.post("/analyze",json={"report_id":rid,"provider":"openai"}).status_code == 200
+    assert client.post("/analyze",json={"report_id":rid,"provider":"qwen"}).status_code == 200
     state = client.get(f"/reports/{rid}").json()
     data = client.get(state["analysis_url"]).json()
     assert data["coverage"]["requested"] == 51
@@ -86,7 +86,7 @@ def test_multi_file_preserves_source_ids_and_local_pages(client,monkeypatch):
     raw = {"country_assessments":[{"country_code":"ID","status":"compliant","evidence":[{
         "source_document":"document-2","page_number":1,"exact_quote":"Indonesia has a binding commitment."}]}]}
     monkeypatch.setattr(main,"get_provider",lambda *a,**kw:SimpleNamespace(analyze=AsyncMock(return_value=response(raw))))
-    res = client.post("/analyze-multi",json={"report_ids":rids,"provider":"openai","target_countries":["ID"]})
+    res = client.post("/analyze-multi",json={"report_ids":rids,"provider":"qwen","target_countries":["ID"]})
     assert res.status_code == 200
     states = [client.get(f"/reports/{rid}").json() for rid in rids]
     assert states[0]["analysis_id"] == states[1]["analysis_id"]
@@ -145,7 +145,7 @@ def test_provider_errors_do_not_leak_keys(client,monkeypatch):
     rid = upload(client)
     analyze(client,rid)
     assert "SECRET" not in client.get(f"/reports/{rid}").text
-    assert "SECRET" not in client.post("/providers/test",json={"provider":"openai","api_key":"SECRET"}).text
+    assert "SECRET" not in client.post("/providers/test",json={"provider":"qwen","api_key":"SECRET"}).text
 
 
 def test_regional_hybrid_escalation_and_fallback(client,monkeypatch):
@@ -182,7 +182,7 @@ async def test_five_simultaneous_jobs_do_not_deadlock(tmp_path,monkeypatch):
         path = tmp_path / f"{rid}.pdf"
         path.write_bytes(pdf_bytes())
         main.reports_store[rid] = {"file_path":str(path),"file_name":path.name}
-    await asyncio.wait_for(asyncio.gather(*[main._run_reports([rid],None,None,"openai",None,["JP"]) for rid in rids]),timeout=5)
+    await asyncio.wait_for(asyncio.gather(*[main._run_reports([rid],None,None,"qwen",None,["JP"]) for rid in rids]),timeout=5)
     assert all(main.reports_store[rid]["status"] == "completed" for rid in rids)
 
 

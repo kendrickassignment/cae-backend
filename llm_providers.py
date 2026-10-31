@@ -1,16 +1,4 @@
-"""
-Corporate Accountability Engine (CAE) — LLM Provider Abstraction
-Built for Act For Farmed Animals (AFFA) / Sinergia Animal International
-
-Supports multiple LLM providers, with Hybrid Routing for Gemini:
-  1. Google Gemini (Hybrid: gemini-3-flash-preview for fast scan, gemini-3.1-pro-preview for deep analysis)
-  2. Qwen (Backup — Qwen 3.5-397B-A17B via DashScope OpenAI-compatible API)
-  3. OpenAI (Paid — GPT-4o, if grant money comes through)
-
-All providers use the same interface so you can swap with a single env var.
-
-Updated: March 2026 — Providers: Gemini (primary), Qwen 3.5-397B-A17B (backup), OpenAI (grant-funded)
-"""
+"""CAE providers: Gemini hybrid analysis and Qwen 3.8 Max structured analysis."""
 
 import os
 import json
@@ -20,6 +8,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 LLM_CONCURRENCY = asyncio.Semaphore(5)
+DEFAULT_QWEN_MODEL = "qwen3.8-max"
+
+
+def resolve_provider_name(provider_name: str | None = None) -> str:
+    name = (provider_name or os.getenv("LLM_PROVIDER", "gemini")).strip().lower()
+    if name not in {"gemini", "qwen"}:
+        raise ValueError("Supported providers: gemini, qwen. Update LLM_PROVIDER or the saved provider selection.")
+    return name
+
 
 
 @dataclass
@@ -96,12 +93,12 @@ class GeminiProvider(BaseLLMProvider):
     Mendukung Gemini 3 Flash Preview (Kecepatan) dan Gemini 3.1 Pro Preview (Penalaran Mendalam).
     """
     # Default model diperbarui ke gemini-3-flash-preview
-    def __init__(self, api_key: str = None, model_name: str = "gemini-3-flash-preview"):
+    def __init__(self, api_key: str = None, model_name: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required. Get free at https://aistudio.google.com/apikey")
         
-        self.model = model_name
+        self.model = model_name or os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
@@ -175,27 +172,22 @@ class GeminiProvider(BaseLLMProvider):
 # ============================================================================
 
 class QwenProvider(BaseLLMProvider):
-    """
-    Qwen API via Alibaba DashScope International — OpenAI-compatible endpoint.
-    - Model: qwen3.5-397b-a17b
-    - Context: 256k tokens
-    - Supports thinking/reasoning mode (enable_thinking)
-    - Best backup for large documents when Gemini is rate-limited.
-
-    Get your API key: https://dashscope.console.aliyun.com/
-    Set env var: DASHSCOPE_API_KEY
-    """
+    """Qwen 3.8 Max through Alibaba Cloud Model Studio Chat Completions."""
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
         if not self.api_key:
-            raise ValueError(
-                "DASHSCOPE_API_KEY is not configured. "
-                "Qwen is listed as a backup provider but DashScope International is not yet available. "
-                "Set the DASHSCOPE_API_KEY env var when it launches: https://dashscope.console.aliyun.com/"
-            )
-        self.model = os.getenv("QWEN_MODEL", "qwen3.5-397b-a17b")
-        self.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            raise ValueError("DASHSCOPE_API_KEY is required for Qwen. Use a key from the endpoint's region.")
+        self.model = os.getenv("QWEN_MODEL", DEFAULT_QWEN_MODEL)
+        workspace = os.getenv("DASHSCOPE_WORKSPACE_ID", "").strip()
+        if workspace and not all(c.isalnum() or c == "-" for c in workspace):
+            raise ValueError("Invalid DASHSCOPE_WORKSPACE_ID")
+        default_url = (f"https://{workspace}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+                       if workspace else "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        self.base_url = (os.getenv("QWEN_BASE_URL") or default_url).rstrip("/")
+        parsed = httpx.URL(self.base_url)
+        if parsed.scheme != "https" or not parsed.host or parsed.userinfo or parsed.query or parsed.fragment:
+            raise ValueError("QWEN_BASE_URL must be an HTTPS base URL without credentials, query or fragment")
 
     async def analyze(self, messages: list[dict]) -> LLMResponse:
         """Send analysis request to Qwen via DashScope OpenAI-compatible API."""
@@ -204,9 +196,10 @@ class QwenProvider(BaseLLMProvider):
             "model": self.model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 16384,
-            "response_format": {"type": "json_object"},
-            "extra_body": {"enable_thinking": False}  # Disabled for structured JSON output
+            "max_tokens": 32768,
+            "response_format": {"type": "json_object"}
+            # Qwen 3.8 supports structured output with its default thinking mode.
+            # extra_body is an SDK option, not a nested HTTP request field.
         }
 
         headers = {
@@ -227,7 +220,12 @@ class QwenProvider(BaseLLMProvider):
 
         data = await retry_with_backoff(_make_request)
 
-        content = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ValueError("Qwen output exceeded its limit; retry with fewer target countries or files.")
+        content = choice["message"].get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Qwen returned no final answer")
         usage = data.get("usage", {})
 
         return LLMResponse(
@@ -237,77 +235,7 @@ class QwenProvider(BaseLLMProvider):
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
-            cost_estimate_usd=0.0  # Pay-as-you-go, minimal cost
-        )
-
-
-# ============================================================================
-# PROVIDER 3: OPENAI (PAID — if grant comes through)
-# ============================================================================
-
-class OpenAIProvider(BaseLLMProvider):
-    """
-    OpenAI API — PAID
-    - Model: gpt-4o
-    - ~$0.15-$0.30 per 200-page report
-    - 128k context window
-    - Best quality, but costs money.
-
-    Only use if AFFA gets grant funding.
-    """
-
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY is required.")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
-        self.base_url = "https://api.openai.com/v1"
-
-    async def analyze(self, messages: list[dict]) -> LLMResponse:
-        """Send analysis request to OpenAI API."""
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 8192,
-            "response_format": {"type": "json_object"}
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        async def _make_request():
-            async with LLM_CONCURRENCY:
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    response = await client.post(
-                        f"{self.base_url}/chat/completions",
-                        json=payload,
-                        headers=headers
-                    )
-                    response.raise_for_status()
-                    return response.json()
-
-        data = await retry_with_backoff(_make_request)
-
-        content = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
-
-        # Estimate cost (GPT-4o pricing as of 2025)
-        input_cost = (usage.get("prompt_tokens", 0) / 1_000_000) * 2.50
-        output_cost = (usage.get("completion_tokens", 0) / 1_000_000) * 10.00
-        total_cost = input_cost + output_cost
-
-        return LLMResponse(
-            content=content,
-            model=self.model,
-            provider="openai",
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
-            cost_estimate_usd=round(total_cost, 4)
+            cost_estimate_usd=0.0  # Unknown; result metadata explicitly marks estimates unavailable
         )
 
 
@@ -318,7 +246,6 @@ class OpenAIProvider(BaseLLMProvider):
 PROVIDERS = {
     "gemini": GeminiProvider,
     "qwen": QwenProvider,
-    "openai": OpenAIProvider,
 }
 
 
@@ -334,20 +261,13 @@ def get_provider(
       2. Default to "gemini" (best option for large docs)
 
     Args:
-        provider_name: "gemini", "qwen", or "openai"
+        provider_name: "gemini" or "qwen"
         api_key: Optional API key (otherwise reads from env)
 
     Returns:
         An initialized LLM provider instance
     """
-    if provider_name is None:
-        provider_name = os.getenv("LLM_PROVIDER", "gemini").lower()
-
-    if provider_name not in PROVIDERS:
-        raise ValueError(
-            f"Unknown provider: {provider_name}. "
-            f"Available: {', '.join(PROVIDERS.keys())}"
-        )
+    provider_name = resolve_provider_name(provider_name)
 
     provider_class = PROVIDERS[provider_name]
 
@@ -361,35 +281,11 @@ def get_provider(
 # ============================================================================
 
 PROVIDER_GUIDE = """
-╔══════════════════════════════════════════════════════════════╗
-║              CAE — LLM PROVIDER GUIDE (2026)                ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  🥇 GEMINI (Primary — Recommended)                          ║
-║     Stage 1: gemini-3-flash-preview (fast scan)              ║
-║     Stage 2: gemini-3.1-pro-preview (escalation for high risk)║                       
-║     Context: 1M tokens (handles full 300-page PDFs!)         ║
-║     Paid: $300 prepaid balance                                ║
-║     Best for: Large documents, single-pass analysis          ║
-║     Key: https://aistudio.google.com/apikey                  ║
-║                                                              ║
-║  🥈 QWEN (Backup)                                           ║
-║     Model: qwen3.5-397b-a17b                                 ║
-║     Context: 256k tokens                                     ║
-║     API: DashScope International (OpenAI-compatible)         ║
-║     Best for: Backup when Gemini is rate-limited             ║
-║     Key: https://dashscope.console.aliyun.com/               ║
-║                                                              ║
-║  💰 OPENAI (If grant funded)                                ║
-║     Model: gpt-4o                                            ║
-║     Context: 128k tokens                                     ║
-║     Cost: ~$0.15-$0.30 per 200-page report                  ║
-║     Best for: Highest quality, if budget allows              ║
-║                                                              ║
-║  ⚡ ALL PROVIDERS: Auto-retry on 429 rate limits             ║
-║     Backoff: 15s → 30s → 60s (3 retries max)                ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+CAE supports two providers:
+- Gemini: Flash scan with Pro escalation for high-risk evidence.
+- Qwen: qwen3.8-max, JSON output, optional workspace-specific endpoint.
+Both are usage-billed services. Configure keys server-side or per request.
+See env.example and docs/model-providers.md. Retry 429/5xx with backoff.
 """
 
 if __name__ == "__main__":

@@ -77,8 +77,17 @@ A public rollout requires authenticated ownership, shared object/result storage 
 - `geography.py`: versioned country catalog.
 - `asia_analysis.py`: citation validation, country scoring and coverage.
 - `system_prompt.py`: legacy compatibility plus Asia evidence rules.
-- `llm_providers.py`: Gemini, Qwen and OpenAI clients.
+- `llm_providers.py`: Gemini and Qwen clients.
 - `pdf_parser.py`: page-preserving extraction.
 - `tests/`: deterministic unit/API/concurrency regression tests.
 
 Geography follows [UN M49](https://unstats.un.org/unsd/methodology/m49/)-inspired regions plus Taiwan as a separate reporting market; this is not a sovereignty/legal determination.
+
+## Two-provider configuration (31 October 2026)
+
+Only `gemini` and `qwen` are accepted. Qwen now defaults to `qwen3.8-max`.
+Gemini retains Flash -> Pro routing; these are two providers, not a two-call limit.
+Remove old OpenAI environment configuration and reset saved unsupported selections.
+For Qwen, set `DASHSCOPE_API_KEY` and preferably `DASHSCOPE_WORKSPACE_ID` (Singapore),
+or a region-matching `QWEN_BASE_URL`. See [provider migration](docs/model-providers.md).
+Historical results and the earlier PDF report remain unchanged as dated records.
